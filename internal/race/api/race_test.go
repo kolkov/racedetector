@@ -138,18 +138,20 @@ func TestGetCurrentContext_FirstCall(t *testing.T) {
 		t.Fatal("getCurrentContext() returned nil")
 	}
 
-	// TID should be 0 (first allocated).
+	// TID should be 0 (first allocated from pool after Reset).
 	if ctx.TID != 0 {
 		t.Errorf("First context TID = %d, want 0", ctx.TID)
 	}
 
-	// Epoch should be initialized to 0@0.
+	// Epoch should be initialized to 0@1.
+	// CRITICAL: Clock must start at 1, not 0, to detect unsynchronized races.
+	// Clock 0 means "never happened" in HappensBefore check (0 <= 0 is TRUE).
 	tid, clock := ctx.Epoch.Decode()
 	if tid != 0 {
 		t.Errorf("First context Epoch TID = %d, want 0", tid)
 	}
-	if clock != 0 {
-		t.Errorf("First context Epoch Clock = %d, want 0", clock)
+	if clock != 1 {
+		t.Errorf("First context Epoch Clock = %d, want 1", clock)
 	}
 }
 
@@ -647,21 +649,23 @@ func TestInitFunctionality(t *testing.T) {
 		t.Error("Init() did not enable detector")
 	}
 
-	// Verify nextTID is set to 1 after Init().
-	// Init() allocates TID=0 for the main goroutine, then sets nextTID to 1
-	// to ensure subsequent goroutines get TID >= 1.
-	expectedNextTID := uint32(1)
+	// Verify nextTID is set to 2 after Init().
+	// Init() allocates TID=1 for the main goroutine (TID=0 is reserved as sentinel
+	// meaning "no exclusive writer" in SmartTrack), then sets nextTID to 2
+	// to ensure subsequent goroutines get TID >= 2.
+	expectedNextTID := uint32(2)
 	if got := nextTID.Load(); got != expectedNextTID {
 		t.Errorf("After Init(), nextTID = %d, want %d", got, expectedNextTID)
 	}
 
-	// Verify main goroutine has TID=0.
+	// Verify main goroutine has TID=1.
+	// TID=0 is reserved as sentinel value in SmartTrack.
 	ctx := getCurrentContext()
 	if ctx == nil {
 		t.Fatal("getCurrentContext() returned nil after Init()")
 	}
-	if ctx.TID != 0 {
-		t.Errorf("Main goroutine TID = %d, want 0", ctx.TID)
+	if ctx.TID != 1 {
+		t.Errorf("Main goroutine TID = %d, want 1", ctx.TID)
 	}
 
 	// Verify detector instance is not nil.
@@ -693,10 +697,11 @@ func TestInitIdempotent(t *testing.T) {
 		t.Errorf("After second Init(), RacesDetected() = %d, want 0", got)
 	}
 
-	// Verify main goroutine still has TID=0.
+	// Verify main goroutine still has TID=1.
+	// TID=0 is reserved as sentinel value in SmartTrack.
 	ctx := getCurrentContext()
-	if ctx.TID != 0 {
-		t.Errorf("After second Init(), main goroutine TID = %d, want 0", ctx.TID)
+	if ctx.TID != 1 {
+		t.Errorf("After second Init(), main goroutine TID = %d, want 1", ctx.TID)
 	}
 
 	// Verify enabled.
@@ -705,18 +710,20 @@ func TestInitIdempotent(t *testing.T) {
 	}
 }
 
-// TestInitMainGoroutineTID verifies main goroutine always gets TID=0.
+// TestInitMainGoroutineTID verifies main goroutine always gets TID=1.
+// TID=0 is reserved as sentinel value in SmartTrack meaning "no exclusive writer".
 func TestInitMainGoroutineTID(t *testing.T) {
 	// Reset and Init.
 	Init()
 
-	// Main goroutine (this test) should have TID=0.
+	// Main goroutine (this test) should have TID=1.
+	// TID=0 is reserved as sentinel value.
 	mainCtx := getCurrentContext()
-	if mainCtx.TID != 0 {
-		t.Errorf("Main goroutine TID = %d, want 0", mainCtx.TID)
+	if mainCtx.TID != 1 {
+		t.Errorf("Main goroutine TID = %d, want 1", mainCtx.TID)
 	}
 
-	// Spawn a new goroutine - should get TID=1 (or higher).
+	// Spawn a new goroutine - should get TID=2 (or higher).
 	var spawnedTID uint16
 	done := make(chan bool)
 	go func() {
@@ -726,9 +733,13 @@ func TestInitMainGoroutineTID(t *testing.T) {
 	}()
 	<-done
 
-	// Spawned goroutine should NOT have TID=0.
+	// Spawned goroutine should NOT have TID=0 or TID=1.
+	// TID=0 is reserved as sentinel, TID=1 is reserved for main.
 	if spawnedTID == 0 {
-		t.Error("Spawned goroutine incorrectly has TID=0 (reserved for main)")
+		t.Error("Spawned goroutine incorrectly has TID=0 (reserved as sentinel)")
+	}
+	if spawnedTID == 1 {
+		t.Error("Spawned goroutine incorrectly has TID=1 (reserved for main)")
 	}
 }
 
@@ -855,10 +866,10 @@ func TestInitResetsState(t *testing.T) {
 	// Now Init again - should reset everything.
 	Init()
 
-	// Verify nextTID is back to 1 after Init().
-	// Init() allocates TID=0 for main, then sets nextTID to 1.
-	if got := nextTID.Load(); got != 1 {
-		t.Errorf("After Init() reset, nextTID = %d, want 1", got)
+	// Verify nextTID is back to 2 after Init().
+	// Init() allocates TID=1 for main (TID=0 is sentinel), then sets nextTID to 2.
+	if got := nextTID.Load(); got != 2 {
+		t.Errorf("After Init() reset, nextTID = %d, want 2", got)
 	}
 
 	// Verify RacesDetected is 0.
@@ -866,10 +877,11 @@ func TestInitResetsState(t *testing.T) {
 		t.Errorf("After Init() reset, RacesDetected() = %d, want 0", got)
 	}
 
-	// Verify main goroutine has TID=0 again.
+	// Verify main goroutine has TID=1 again.
+	// TID=0 is reserved as sentinel value in SmartTrack.
 	ctx := getCurrentContext()
-	if ctx.TID != 0 {
-		t.Errorf("After Init() reset, main goroutine TID = %d, want 0", ctx.TID)
+	if ctx.TID != 1 {
+		t.Errorf("After Init() reset, main goroutine TID = %d, want 1", ctx.TID)
 	}
 }
 
@@ -912,9 +924,10 @@ func TestInitAfterAutoInit(t *testing.T) {
 		t.Errorf("After explicit Init(), RacesDetected() = %d, want 0", got)
 	}
 
-	// Main goroutine should have TID=0.
+	// Main goroutine should have TID=1.
+	// TID=0 is reserved as sentinel value in SmartTrack.
 	ctx := getCurrentContext()
-	if ctx.TID != 0 {
-		t.Errorf("After explicit Init(), main goroutine TID = %d, want 0", ctx.TID)
+	if ctx.TID != 1 {
+		t.Errorf("After explicit Init(), main goroutine TID = %d, want 1", ctx.TID)
 	}
 }

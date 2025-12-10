@@ -430,6 +430,33 @@ func (vs *VarState) SetExclusiveWriter(tid int64) {
 	vs.mu.Unlock()
 }
 
+// CompareAndSwapExclusiveWriter atomically compares and swaps the exclusive writer.
+//
+// This is used to atomically claim ownership when first writing to a variable.
+// It solves the TOCTOU race condition where two goroutines both see exclusiveWriter=0
+// and both think they're the first writer.
+//
+// Parameters:
+//   - oldVal: Expected current value (typically 0 for first writer claim)
+//   - newVal: New value to set (current goroutine's TID)
+//
+// Returns:
+//   - true if swap succeeded (current value was 'oldVal')
+//   - false if swap failed (current value was not 'oldVal')
+//
+// Thread Safety: Protected by mutex, atomic semantics.
+// Performance: <10ns/op (mutex + compare + conditional write).
+func (vs *VarState) CompareAndSwapExclusiveWriter(oldVal, newVal int64) bool {
+	vs.mu.Lock()
+	if vs.exclusiveWriter == oldVal {
+		vs.exclusiveWriter = newVal
+		vs.mu.Unlock()
+		return true
+	}
+	vs.mu.Unlock()
+	return false
+}
+
 // IncrementWriteCount increments the write counter.
 //
 // This is called on every write to track total write operations.

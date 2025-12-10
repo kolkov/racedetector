@@ -33,9 +33,11 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/kolkov/racedetector/internal/race/detector"
 	"github.com/kolkov/racedetector/internal/race/goroutine"
+	"github.com/kolkov/racedetector/internal/race/vectorclock"
 )
 
 // Global detector state.
@@ -84,7 +86,32 @@ var (
 	// allocCounter counts context allocations to trigger periodic cleanup.
 	// Every 1000 allocations, we scan for dead goroutines and reclaim TIDs.
 	allocCounter atomic.Uint32
+
+	// === Spawn Context Management (GoStart) ===
+	// Tracks VectorClock inheritance from parent to child goroutines.
+
+	// spawnContexts stores pending spawn contexts for child goroutines to inherit.
+	// Uses slice with mutex for strict FIFO ordering (sync.Map.Range is non-deterministic!).
+	spawnContextsMu    sync.Mutex
+	spawnContextsSlice []*spawnInfo
+
+	// nextSpawnID generates unique IDs for spawn contexts.
+	nextSpawnID atomic.Uint64
+
+	// spawnContextTTL is the maximum time a spawn context waits for child to claim.
+	// After this, the context is cleaned up to prevent memory leaks.
+	spawnContextTTL = 100 * time.Millisecond
 )
+
+// spawnInfo contains information to pass from parent to child goroutine.
+// This enables happens-before tracking across goroutine creation.
+type spawnInfo struct {
+	parentGID   int64                    // GID of parent goroutine
+	parentClock *vectorclock.VectorClock // Snapshot of parent's clock at fork
+	pc          uintptr                  // Program counter of go statement (for stack traces)
+	createdAt   time.Time                // For TTL-based cleanup
+	consumed    atomic.Bool              // True if child has claimed this context
+}
 
 // init initializes the global race detector.
 //
@@ -184,6 +211,178 @@ func racewrite(addr uintptr) {
 	// This calls the FastTrack algorithm to detect write-write and read-write races.
 	// Pass the RaceContext for this goroutine to enable proper per-goroutine tracking.
 	det.OnWrite(addr, ctx)
+}
+
+// === Goroutine Lifecycle (GoStart/GoEnd) ===
+
+// racegostart is called BEFORE creating a new goroutine (go func()).
+//
+// This function implements the fork semantics from FastTrack algorithm:
+//  1. Snapshot current (parent's) VectorClock
+//  2. Increment parent's clock (fork is a synchronization event)
+//  3. Store snapshot for child to inherit
+//
+// The snapshot establishes happens-before: all parent's operations before
+// the go statement will be visible to the child goroutine.
+//
+// Parameters:
+//   - pc: Program counter of the go statement (for stack traces)
+//
+// Returns:
+//   - uintptr: Spawn ID that can be used for explicit context passing
+//
+// Performance: ~100ns (VectorClock clone + atomic operations).
+//
+// Thread Safety: Safe for concurrent calls from multiple goroutines.
+//
+// Example:
+//
+//	x = 42                   // Parent writes x
+//	go func() {              // racegostart() called here
+//	    _ = x                // Child reads x - sees parent's write (no race)
+//	}()
+//
+//go:nosplit
+func racegostart(pc uintptr) uintptr {
+	if !enabled.Load() {
+		return 0
+	}
+
+	// Step 1: Get parent's context.
+	parentCtx := getCurrentContext()
+	parentGID := getGoroutineID()
+
+	// Step 2: Create snapshot of parent's VectorClock.
+	// This is the clock the child will inherit.
+	spawnClock := parentCtx.C.Clone()
+
+	// Step 3: Increment parent's clock.
+	// Parent's subsequent operations have higher clock than fork point.
+	// This ensures child doesn't see parent's operations after fork.
+	parentCtx.IncrementClock()
+
+	// Step 4: Store spawn context for child to consume (strict FIFO order).
+	info := &spawnInfo{
+		parentGID:   parentGID,
+		parentClock: spawnClock,
+		pc:          pc,
+		createdAt:   time.Now(),
+	}
+
+	// Append to slice under lock for strict FIFO ordering.
+	spawnContextsMu.Lock()
+	spawnContextsSlice = append(spawnContextsSlice, info)
+	spawnContextsMu.Unlock()
+
+	// Generate unique spawn ID (for API compatibility, not used for matching).
+	spawnID := nextSpawnID.Add(1)
+
+	return uintptr(spawnID)
+}
+
+// racegoend is called when a goroutine terminates.
+//
+// This function cleans up resources associated with the goroutine:
+//  1. Returns TID to the free pool for reuse
+//  2. Removes context from cache
+//  3. Cleans up TID→GID mapping
+//
+// Performance: ~50ns (map operations + TID free).
+//
+// Thread Safety: Safe for concurrent calls.
+//
+//go:nosplit
+func racegoend() {
+	if !enabled.Load() {
+		return
+	}
+
+	gid := getGoroutineID()
+
+	// Load and delete context atomically.
+	if val, ok := contexts.LoadAndDelete(gid); ok {
+		ctx := val.(*goroutine.RaceContext)
+
+		// Return TID to pool for reuse.
+		freeTID(ctx.TID)
+
+		// Clean up TID→GID mapping.
+		tidToGID.Delete(ctx.TID)
+	}
+}
+
+// RaceGoStart is the exported wrapper for racegostart.
+// Used by tests and instrumented code that can't call lowercase functions.
+func RaceGoStart(pc uintptr) uintptr {
+	return racegostart(pc)
+}
+
+// RaceGoEnd is the exported wrapper for racegoend.
+// Used by tests and instrumented code that can't call lowercase functions.
+func RaceGoEnd() {
+	racegoend()
+}
+
+// findAndConsumeSpawnContext attempts to find and consume a spawn context
+// for the current (child) goroutine using heuristic matching.
+//
+// Heuristic: A newly spawned goroutine calls getCurrentContext() shortly
+// after parent called racegostart(). We find the oldest unclaimed spawn
+// context and consume it.
+//
+// Algorithm:
+//  1. Lock spawn contexts slice for exclusive access
+//  2. Iterate in FIFO order (oldest first - strict ordering!)
+//  3. Skip already consumed contexts
+//  4. Skip expired contexts (TTL > 100ms)
+//  5. First unclaimed, non-expired context is consumed
+//  6. Clean up all consumed/expired contexts to prevent memory leaks
+//
+// CRITICAL: Uses slice iteration instead of sync.Map.Range() because
+// sync.Map.Range() iterates in non-deterministic order, which can cause
+// child goroutines to receive wrong parent's clock in rapid spawn scenarios.
+//
+// Returns parent's VectorClock if found, nil otherwise.
+func findAndConsumeSpawnContext() *vectorclock.VectorClock {
+	spawnContextsMu.Lock()
+	defer spawnContextsMu.Unlock()
+
+	now := time.Now()
+	var foundClock *vectorclock.VectorClock
+
+	// Find first valid spawn context (FIFO order - oldest first).
+	// This ensures strict ordering: first spawn -> first child match.
+	for _, info := range spawnContextsSlice {
+		// Skip already consumed contexts.
+		if info.consumed.Load() {
+			continue
+		}
+
+		// Skip expired contexts (will be cleaned up below).
+		if now.Sub(info.createdAt) > spawnContextTTL {
+			continue
+		}
+
+		// Found valid spawn context - consume it atomically.
+		// CAS provides extra safety even though we hold the lock.
+		if info.consumed.CompareAndSwap(false, true) {
+			foundClock = info.parentClock
+			break
+		}
+	}
+
+	// Clean up expired and consumed contexts from the slice.
+	// This prevents memory leaks and keeps the slice compact.
+	// Reuse backing array to avoid allocations.
+	validContexts := spawnContextsSlice[:0]
+	for _, info := range spawnContextsSlice {
+		if !info.consumed.Load() && now.Sub(info.createdAt) <= spawnContextTTL {
+			validContexts = append(validContexts, info)
+		}
+	}
+	spawnContextsSlice = validContexts
+
+	return foundClock
 }
 
 // raceacquire is called by compiler instrumentation on mutex lock operations (Phase 4 Task 4.1).
@@ -628,11 +827,18 @@ func racewaitgroupwaitafter(wg uintptr) {
 // This function maintains a per-goroutine context cache in the global
 // contexts sync.Map. On first access, it:
 //  1. Extracts goroutine ID (via fast assembly on amd64, ~1ns)
-//  2. Allocates a TID from the reuse pool (0-255)
-//  3. Creates a RaceContext for that TID
-//  4. Caches it in the map
+//  2. Tries to find spawn context from parent (GoStart inheritance)
+//  3. Allocates a TID from the reuse pool (0-255)
+//  4. Creates a RaceContext for that TID (with or without parent clock)
+//  5. Caches it in the map
 //
 // On subsequent accesses, it just does a map lookup (~5ns).
+//
+// GoStart Inheritance (NEW):
+//   - If racegostart() was called before spawning this goroutine,
+//     child inherits parent's VectorClock establishing happens-before.
+//   - This prevents false positives for patterns like:
+//     x = 42; go func() { _ = x }()
 //
 // Performance:
 //   - First call per goroutine: ~100ns (includes TID allocation from pool)
@@ -650,8 +856,8 @@ func getCurrentContext() *goroutine.RaceContext {
 	// Fallback: runtime.Stack parsing on other architectures (~4.7µs).
 	gid := getGoroutineID()
 
-	// Step 2: Try to load existing context from cache.
-	// sync.Map.Load is lock-free for existing keys (fast path).
+	// Step 2: Try to load existing context from cache (fast path).
+	// sync.Map.Load is lock-free for existing keys.
 	if val, ok := contexts.Load(gid); ok {
 		return val.(*goroutine.RaceContext)
 	}
@@ -659,12 +865,24 @@ func getCurrentContext() *goroutine.RaceContext {
 	// Step 3: Slow path - allocate new context for this goroutine.
 	// This happens once per goroutine at first access.
 
+	// Step 3a: Try to find spawn context from parent (GoStart inheritance).
+	// If parent called racegostart() before spawning us, we inherit their clock.
+	parentClock := findAndConsumeSpawnContext()
+
 	// Allocate TID from reuse pool.
 	// This supports unlimited goroutines by recycling TIDs from dead goroutines.
 	tid := allocTID()
 
 	// Create new RaceContext for this goroutine.
-	ctx := goroutine.Alloc(tid)
+	var ctx *goroutine.RaceContext
+	if parentClock != nil {
+		// GoStart path: inherit parent's clock.
+		// This establishes happens-before from parent's operations before fork.
+		ctx = goroutine.AllocWithParentClock(tid, parentClock)
+	} else {
+		// Legacy path: fresh clock (main goroutine or untracked spawns).
+		ctx = goroutine.Alloc(tid)
+	}
 
 	// Store in cache for future accesses.
 	// sync.Map.Store is thread-safe and handles concurrent stores gracefully.
@@ -1149,13 +1367,27 @@ func RaceChannelClose(ch uintptr) {
 func Reset() {
 	det.Reset()
 	// Clear goroutine contexts.
-	contexts = sync.Map{}
+	// CRITICAL: Use Range+Delete instead of reassignment to avoid data race
+	// with goroutines still accessing the map.
+	contexts.Range(func(key, _ interface{}) bool {
+		contexts.Delete(key)
+		return true
+	})
 	// Clear TID → GID mapping.
-	tidToGID = sync.Map{}
+	// CRITICAL: Use Range+Delete instead of reassignment to avoid data race.
+	tidToGID.Range(func(key, _ interface{}) bool {
+		tidToGID.Delete(key)
+		return true
+	})
 	// Reset TID counter.
 	nextTID.Store(0)
 	// Reset allocation counter.
 	allocCounter.Store(0)
+	// Clear spawn context tracking.
+	spawnContextsMu.Lock()
+	spawnContextsSlice = nil
+	spawnContextsMu.Unlock()
+	nextSpawnID.Store(0)
 	// Reinitialize TID pool for tests.
 	// Tests call Reset() but expect to be able to allocate TIDs afterwards.
 	initTIDPool()
@@ -1229,42 +1461,57 @@ func Init() {
 
 	// Clear any existing goroutine contexts.
 	// This ensures a clean slate when re-initializing.
-	contexts = sync.Map{}
+	// CRITICAL: Use Range+Delete instead of reassignment to avoid data race
+	// with goroutines still accessing the map.
+	contexts.Range(func(key, _ interface{}) bool {
+		contexts.Delete(key)
+		return true
+	})
 
 	// Clear TID → GID mapping.
-	tidToGID = sync.Map{}
+	// CRITICAL: Use Range+Delete instead of reassignment to avoid data race.
+	tidToGID.Range(func(key, _ interface{}) bool {
+		tidToGID.Delete(key)
+		return true
+	})
+
+	// Clear spawn context tracking (GoStart).
+	spawnContextsMu.Lock()
+	spawnContextsSlice = nil
+	spawnContextsMu.Unlock()
+	nextSpawnID.Store(0)
 
 	// Initialize TID reuse pool (Phase 2 Task 2.2).
 	// This sets up the free TID stack with all 256 TIDs available.
 	initTIDPool()
 
 	// Allocate RaceContext for the main goroutine.
-	// By convention, the main goroutine always gets TID=0.
+	// CRITICAL: Main goroutine gets TID=1, NOT TID=0.
+	// TID=0 is reserved as sentinel value meaning "no exclusive writer" in SmartTrack.
+	// Using TID=0 for main would cause SmartTrack to incorrectly treat main's writes
+	// as "no writer present", missing races when child goroutines write.
 	gid := getGoroutineID()
-	mainCtx := goroutine.Alloc(0)
+	mainCtx := goroutine.Alloc(1) // TID=1 for main goroutine
 	contexts.Store(gid, mainCtx)
 
 	// Track main goroutine in TID → GID mapping.
-	tidToGID.Store(uint8(0), gid)
+	tidToGID.Store(uint8(1), gid)
 
-	// Remove TID 0 from the free pool (already allocated to main goroutine).
-	// TID 0 is at index 0 in the stack: [0, 1, 2, ..., 255]
+	// Remove TIDs 0 and 1 from the free pool.
+	// TID 0: Reserved as sentinel (never allocate)
+	// TID 1: Already allocated to main goroutine
 	tidPoolMu.Lock()
-	if len(freeTIDs) > 0 && freeTIDs[0] == 0 {
-		// Remove first element (TID 0).
-		// Stack becomes: [1, 2, 3, ..., 255]
-		// Next allocation pops from end: 255, 254, ...
-		// Wait, this is backwards! We want next allocation to be TID 1.
-		// Let's pop from the beginning instead when allocating.
-		// Actually, let's just remove TID 0 from wherever it is.
-		// Since stack is [0, 1, 2, ..., 255], TID 0 is at index 0.
-		freeTIDs = freeTIDs[1:] // Now: [1, 2, 3, ..., 255]
+	// Stack is [0, 1, 2, ..., 255]. Remove first two elements.
+	if len(freeTIDs) >= 2 && freeTIDs[0] == 0 && freeTIDs[1] == 1 {
+		freeTIDs = freeTIDs[2:] // Now: [2, 3, 4, ..., 255]
 	}
 	tidPoolMu.Unlock()
 
-	// Increment nextTID so that the next spawned goroutine gets TID >= 1.
-	// This ensures TID=0 is reserved exclusively for the main goroutine.
-	nextTID.Store(1)
+	// Set nextTID to 2 so that the next spawned goroutine gets TID >= 2.
+	// TID 0: Reserved as sentinel (never allocate)
+	// TID 1: Main goroutine (already allocated above)
+	// TID 2+: Child goroutines (allocated dynamically)
+	nextTID.Store(2)
 }
 
 // Fini finalizes the race detector and prints a summary report.

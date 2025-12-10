@@ -6,6 +6,7 @@
 package api
 
 import (
+	"runtime"
 	"sync"
 	"testing"
 	"unsafe"
@@ -258,22 +259,33 @@ func TestGoRace_NestedStructField(t *testing.T) {
 	defer Fini()
 
 	var px int // Simulate NamedPoint.p.x
-	ch := make(chan bool, 1)
+	ch := make(chan bool, 2)
+	start := make(chan struct{})
 	var mu1, mu2 sync.Mutex
 	mu1Addr := uintptr(unsafe.Pointer(&mu1))
 	mu2Addr := uintptr(unsafe.Pointer(&mu2))
 
 	go func() {
+		<-start
+		runtime.Gosched()
 		RaceAcquire(mu1Addr)
 		simulateAccess(addrOf(&px), true) // p.p.x = 1
 		RaceRelease(mu1Addr)
 		ch <- true
 	}()
 
-	// Read nested field
-	RaceAcquire(mu2Addr)
-	simulateAccess(addrOf(&px), false) // _ = p.p.x
-	RaceRelease(mu2Addr)
+	go func() {
+		<-start
+		runtime.Gosched()
+		// Read nested field
+		RaceAcquire(mu2Addr)
+		simulateAccess(addrOf(&px), false) // _ = p.p.x
+		RaceRelease(mu2Addr)
+		ch <- true
+	}()
+
+	close(start)
+	<-ch
 	<-ch
 
 	if RacesDetected() == 0 {

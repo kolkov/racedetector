@@ -365,25 +365,30 @@ func (d *Detector) OnWrite(addr uintptr, ctx *goroutine.RaceContext) {
 	}
 
 	if exclusiveWriter == 0 {
-		// First write ever - claim ownership.
-		// But first check if there was a previous read that we need to check for races.
-		// If readEpoch != 0, there was a read - check for read-write race before claiming ownership.
-		readEpoch := vs.GetReadEpoch()
-		if readEpoch == 0 && !vs.IsPromoted() {
-			// No previous read - safe to claim ownership and return early.
-			vs.SetExclusiveWriter(currentTID)
-			vs.W = currentEpoch
-			vs.IncrementWriteCount()
-			// Capture stack (v0.2.0 Task 6).
-			stackHash := stackdepot.CaptureStack()
-			vs.SetWriteStack(stackHash)
-			ctx.IncrementClock()
-			return
+		// First write ever - try to claim ownership atomically.
+		// CRITICAL: Use CAS to prevent TOCTOU race where two goroutines both
+		// see exclusiveWriter=0 and both think they're the first writer.
+		// If CAS fails, another goroutine claimed ownership first - fall through to race check.
+		if vs.CompareAndSwapExclusiveWriter(0, currentTID) {
+			// Successfully claimed ownership - now check for read races.
+			readEpoch := vs.GetReadEpoch()
+			if readEpoch == 0 && !vs.IsPromoted() {
+				// No previous read - safe to return early.
+				vs.W = currentEpoch
+				vs.IncrementWriteCount()
+				// Capture stack (v0.2.0 Task 6).
+				stackHash := stackdepot.CaptureStack()
+				vs.SetWriteStack(stackHash)
+				ctx.IncrementClock()
+				return
+			}
+			// There was a previous read - must check for read-write race below.
+			// Fall through to read-write race check.
+		} else {
+			// CAS failed - another goroutine claimed ownership.
+			// Refresh exclusiveWriter and fall through to handle as second writer.
+			exclusiveWriter = vs.GetExclusiveWriter()
 		}
-		// There was a previous read - must check for read-write race below.
-		// Claim ownership anyway (will be promoted to shared if second writer appears).
-		vs.SetExclusiveWriter(currentTID)
-		// Fall through to read-write race check.
 	}
 
 	if exclusiveWriter > 0 && exclusiveWriter != currentTID {

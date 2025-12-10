@@ -44,24 +44,32 @@ type RaceContext struct {
 //
 // The context is initialized with:
 //   - TID set to the provided tid
-//   - C initialized as a zero vector clock (all threads at time 0)
-//   - Epoch set to epoch.NewEpoch(tid, 0) (TID@0)
+//   - C initialized with C[tid]=1 (this thread at time 1, others at 0)
+//   - Epoch set to epoch.NewEpoch(tid, 1) (TID@1)
 //
 // This represents a newly started goroutine at the beginning of logical time.
+//
+// IMPORTANT: Clock starts at 1, not 0. This is critical for race detection:
+// - Clock 0 means "never happened" (default in VectorClock)
+// - Two accesses at clock 0 would appear to "happen-before" each other
+// - Starting at 1 ensures unsynchronized accesses are detected as races
 //
 // Example:
 //
 //	ctx := Alloc(5)
 //	// ctx.TID = 5
-//	// ctx.C = {0:0, 1:0, ..., 65535:0}
-//	// ctx.Epoch = 0@5 (clock=0, tid=5)
+//	// ctx.C = {5:1, others:0}
+//	// ctx.Epoch = 1@5 (clock=1, tid=5)
 func Alloc(tid uint16) *RaceContext {
 	ctx := &RaceContext{
 		TID: tid,
 		C:   vectorclock.New(),
 	}
-	// Initialize epoch cache to TID@0 (clock 0 for new goroutine).
-	ctx.Epoch = epoch.NewEpoch(tid, 0)
+	// Initialize epoch cache to TID@1 (clock 1 for new goroutine).
+	// CRITICAL: Clock must start at 1, not 0, to detect unsynchronized races.
+	// Clock 0 means "never happened" in HappensBefore check (0 <= 0 is TRUE).
+	ctx.C.Set(tid, 1) // Set initial clock in VectorClock
+	ctx.Epoch = epoch.NewEpoch(tid, 1)
 	return ctx
 }
 
@@ -82,11 +90,11 @@ func Alloc(tid uint16) *RaceContext {
 // Example:
 //
 //	ctx := Alloc(5)
-//	// ctx.C[5] = 0, ctx.Epoch = 0@5
-//	ctx.IncrementClock()
 //	// ctx.C[5] = 1, ctx.Epoch = 1@5
 //	ctx.IncrementClock()
 //	// ctx.C[5] = 2, ctx.Epoch = 2@5
+//	ctx.IncrementClock()
+//	// ctx.C[5] = 3, ctx.Epoch = 3@5
 func (rc *RaceContext) IncrementClock() {
 	// Step 1: Increment the vector clock for this thread.
 	rc.C.Increment(rc.TID)
@@ -113,11 +121,59 @@ func (rc *RaceContext) IncrementClock() {
 // Example:
 //
 //	ctx := Alloc(5)
-//	e := ctx.GetEpoch()  // Returns 0@5 (clock=0, tid=5)
+//	e := ctx.GetEpoch()  // Returns 1@5 (clock=1, tid=5)
 //	ctx.IncrementClock()
-//	e = ctx.GetEpoch()   // Returns 1@5 (clock=1, tid=5)
+//	e = ctx.GetEpoch()   // Returns 2@5 (clock=2, tid=5)
 //
 //go:nosplit
 func (rc *RaceContext) GetEpoch() epoch.Epoch {
 	return rc.Epoch
+}
+
+// AllocWithParentClock creates a RaceContext that inherits parent's clock.
+//
+// This is the key function for happens-before at goroutine creation (fork):
+//  1. child.C := parent.C (Copy parent's clock - inherit HB relations)
+//  2. child.C[child.TID] = 1 (Initialize child's own component)
+//  3. child.Epoch = NewEpoch(tid, 1)
+//
+// After this, any operation in child "sees" all operations that happened
+// in parent before the fork (go func() statement).
+//
+// Parameters:
+//   - tid: Thread ID allocated for this child goroutine
+//   - parentClock: Snapshot of parent's VectorClock at fork time
+//
+// Returns:
+//   - *RaceContext: Context ready for race detection with inherited HB
+//
+// Example:
+//
+//	Parent at fork: clock={1:5, 3:2}
+//	Child after AllocWithParentClock(2, parentClock):
+//	  clock={1:5, 2:1, 3:2}
+//	        ↑ inherited from parent
+//	             ↑ child's own component initialized to 1
+//	                  ↑ inherited from parent
+func AllocWithParentClock(tid uint16, parentClock *vectorclock.VectorClock) *RaceContext {
+	ctx := &RaceContext{
+		TID: tid,
+		C:   vectorclock.New(),
+	}
+
+	// Step 1: Inherit parent's clock (HB edge: parent fork -> child start).
+	// This copies all components from parent's clock to child's clock.
+	if parentClock != nil {
+		ctx.C.CopyFrom(parentClock)
+	}
+
+	// Step 2: Initialize child's own clock component.
+	// CRITICAL: Must start at 1, not 0, to detect unsynchronized races.
+	// Clock 0 means "never happened" in HappensBefore check (0 <= 0 is TRUE).
+	ctx.C.Set(tid, 1)
+
+	// Step 3: Initialize cached epoch.
+	ctx.Epoch = epoch.NewEpoch(tid, 1)
+
+	return ctx
 }

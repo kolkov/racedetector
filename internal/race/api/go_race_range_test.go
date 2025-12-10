@@ -5,6 +5,7 @@
 package api
 
 import (
+	"runtime"
 	"sync"
 	"testing"
 	"unsafe"
@@ -414,6 +415,7 @@ func TestGoRace_RangeString(t *testing.T) {
 
 	go func() {
 		<-start
+		runtime.Gosched() // Increase chance of concurrent execution.
 		RaceAcquire(mu1Addr)
 		RaceWrite(sAddr)
 		s = "world"
@@ -423,6 +425,7 @@ func TestGoRace_RangeString(t *testing.T) {
 
 	go func() {
 		<-start
+		runtime.Gosched() // Increase chance of concurrent execution.
 		RaceAcquire(mu2Addr)
 		RaceRead(sAddr)
 		for _, r := range s {

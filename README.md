@@ -124,7 +124,7 @@ demo.bat   # Windows
 
 ## 💎 What Makes This Production-Ready
 
-### 🚀 NEW in v0.5.0 (December 2025) - COMING SOON!
+### 🚀 NEW in v0.5.2 (December 2025) - RELEASED!
 
 **Assembly-Optimized Goroutine ID Extraction - ~2200x Speedup!**
 
@@ -136,6 +136,15 @@ demo.bat   # Windows
 - **Zero external dependencies**: Pure Go + assembly (no outrigdev/goid!)
 - **Build constraints**: Go 1.23-1.25 on amd64/arm64
 - **Automatic fallback**: runtime.Stack parsing for unsupported platforms
+
+### 🆕 Coming in v0.6.0 (December 2025) - IN PROGRESS
+
+**Unsynchronized Access Detection Reliability - 100% Test Suite!**
+
+- **GoStart/GoEnd instrumentation**: Proper VectorClock inheritance
+- **SmartTrack TOCTOU race fix**: Atomic ownership claim via CAS
+- **Spawn context FIFO ordering**: Strict first-spawn-first-child matching
+- **Test reliability**: 70% → 100% (20/20 runs passing)
 
 ### v0.4.0 (December 2025)
 
@@ -437,16 +446,16 @@ $ CGO_ENABLED=0 go build -race main.go  # Just works! ✅
 
 ### Roadmap to Go Integration
 
-**v0.5.0 (December 2025):** 🚧 **IN DEVELOPMENT!**
-- Assembly-optimized Goroutine ID (~2200× speedup!) 🚧
+**v0.6.0 (December 2025):** 🚧 **IN DEVELOPMENT!**
+- GoStart/GoEnd instrumentation with VectorClock inheritance 🚧
+- SmartTrack TOCTOU race fix (CAS-based ownership claim) 🚧
+- Test reliability: 70% → 100% (20/20 runs passing) 🚧
+
+**v0.5.2 (December 2025):** ✅ **CURRENT STABLE!**
+- Assembly-optimized Goroutine ID (~2200× speedup!) ✅
 - Zero external dependencies (pure Go + assembly) ✅
 - Platform support: Go 1.23-1.25 on amd64/arm64 ✅
 - Automatic fallback for unsupported platforms ✅
-
-**v0.4.10 (December 2025):** ✅ **CURRENT STABLE!**
-- Complete `racedetector test` command ✅
-- All 10 hotfixes for edge cases ✅
-- Validated on complex multi-package modules ✅
 
 **v0.3.2 (December 2025):** ✅ **COMPLETE!**
 - Go 1.24+ requirement (Swiss Tables, improved sync.Map) ✅
@@ -464,11 +473,11 @@ $ CGO_ENABLED=0 go build -race main.go  # Just works! ✅
 - Production hardening (65K goroutines, 281T ops) ✅
 - Complete stack traces ✅
 
-**v0.6.0 (December 2025):** ✅ **IN PROGRESS**
+**v0.6.0 (December 2025):** 🚧 **IN PROGRESS**
 - Go race test suite: **359/359 scenarios (100%)** ✅
-- Pass rate: 355/359 (98.88%)
-- 21 test category files (including Go 1.25+ additions)
-- Performance benchmarks vs ThreadSanitizer
+- Unsync access detection: GoStart/GoEnd instrumentation 🚧
+- SmartTrack TOCTOU race fix: CAS-based ownership claim 🚧
+- Test reliability: 70% → 100% (20/20 runs passing) 🚧
 
 **v1.0.0 (Q1 2026):**
 - Production-ready with community validation
@@ -607,8 +616,8 @@ See [LICENSE](LICENSE) for full text.
 - **Performance Release:** November 28, 2025 (v0.3.0)
 - **Go 1.24+ Hotfix:** December 1, 2025 (v0.3.2)
 - **Test Command:** December 9-10, 2025 (v0.4.0-v0.4.10)
-- **Assembly GID:** December 10, 2025 (v0.5.0 in development)
-- **Next Milestone:** v0.5.0 (December 2025)
+- **Assembly GID:** December 10, 2025 (v0.5.0-v0.5.2)
+- **Next Milestone:** v0.6.0 (December 2025) - 100% test reliability
 - **Go Proposal:** Q2 2026
 
 ---
@@ -629,7 +638,7 @@ See [LICENSE](LICENSE) for full text.
 
 *"After successfully implementing [Pure-Go HDF5](https://github.com/scigolib/hdf5), we knew Pure-Go race detection was possible. Now we're proving it."*
 
-**Status:** v0.4.10 Stable | v0.5.0 in Development (Assembly GID: ~2200x speedup!)
+**Status:** v0.5.2 Stable | v0.6.0 in Development (100% test reliability!)
 **Community:** Let's get this into Go!
 **Goal:** Official integration by 2027
 

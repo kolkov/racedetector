@@ -7,6 +7,41 @@ import (
 	"github.com/kolkov/racedetector/internal/race/vectorclock"
 )
 
+// verifyVectorClockInit checks vector clock initialization with C[tid]=1 and others=0.
+func verifyVectorClockInit(t *testing.T, ctx *RaceContext, tid uint16) {
+	t.Helper()
+	if ctx.C == nil {
+		t.Fatal("Alloc() returned nil vector clock")
+	}
+	for i := 0; i < vectorclock.MaxThreads; i++ {
+		expected := uint32(0)
+		if uint16(i) == tid {
+			expected = 1 // Own clock starts at 1
+		}
+		if ctx.C.Get(uint16(i)) != expected {
+			t.Errorf("Alloc() C[%d] = %d, want %d", i, ctx.C.Get(uint16(i)), expected)
+		}
+	}
+}
+
+// verifyEpochInit checks that epoch cache is properly initialized.
+func verifyEpochInit(t *testing.T, ctx *RaceContext, tid uint16) {
+	t.Helper()
+	// Verify epoch cache is initialized correctly (clock=1).
+	wantEpoch := epoch.NewEpoch(tid, 1)
+	if ctx.Epoch != wantEpoch {
+		t.Errorf("Alloc(%d).Epoch = 0x%X, want 0x%X", tid, ctx.Epoch, wantEpoch)
+	}
+
+	// Verify epoch cache matches C[TID] (invariant).
+	tidClock := ctx.C.Get(ctx.TID)
+	epochFromVC := epoch.NewEpoch(ctx.TID, uint64(tidClock))
+	if ctx.Epoch != epochFromVC {
+		t.Errorf("Epoch cache out of sync: Epoch=0x%X, NewEpoch(TID=%d, C[%d]=%d)=0x%X",
+			ctx.Epoch, ctx.TID, ctx.TID, tidClock, epochFromVC)
+	}
+}
+
 // TestAlloc tests RaceContext allocation and initialization.
 func TestAlloc(t *testing.T) {
 	tests := []struct {
@@ -14,60 +49,22 @@ func TestAlloc(t *testing.T) {
 		tid     uint16
 		wantTID uint16
 	}{
-		{
-			name:    "zero tid",
-			tid:     0,
-			wantTID: 0,
-		},
-		{
-			name:    "small tid",
-			tid:     5,
-			wantTID: 5,
-		},
-		{
-			name:    "mid tid",
-			tid:     128,
-			wantTID: 128,
-		},
-		{
-			name:    "max tid",
-			tid:     255,
-			wantTID: 255,
-		},
+		{"zero tid", 0, 0},
+		{"small tid", 5, 5},
+		{"mid tid", 128, 128},
+		{"max tid", 255, 255},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := Alloc(tt.tid)
 
-			// Verify TID is set correctly.
 			if ctx.TID != tt.wantTID {
 				t.Errorf("Alloc(%d).TID = %d, want %d", tt.tid, ctx.TID, tt.wantTID)
 			}
 
-			// Verify vector clock is allocated and zero-initialized.
-			if ctx.C == nil {
-				t.Fatal("Alloc() returned nil vector clock")
-			}
-			for i := 0; i < vectorclock.MaxThreads; i++ {
-				if ctx.C.Get(uint16(i)) != 0 {
-					t.Errorf("Alloc() C[%d] = %d, want 0", i, ctx.C.Get(uint16(i)))
-				}
-			}
-
-			// Verify epoch cache is initialized correctly.
-			wantEpoch := epoch.NewEpoch(tt.tid, 0)
-			if ctx.Epoch != wantEpoch {
-				t.Errorf("Alloc(%d).Epoch = 0x%X, want 0x%X", tt.tid, ctx.Epoch, wantEpoch)
-			}
-
-			// Verify epoch cache matches C[TID] (invariant).
-			tidClock := ctx.C.Get(ctx.TID)
-			epochFromVC := epoch.NewEpoch(ctx.TID, uint64(tidClock))
-			if ctx.Epoch != epochFromVC {
-				t.Errorf("Epoch cache out of sync: Epoch=0x%X, NewEpoch(TID=%d, C[%d]=%d)=0x%X",
-					ctx.Epoch, ctx.TID, ctx.TID, tidClock, epochFromVC)
-			}
+			verifyVectorClockInit(t, ctx, tt.tid)
+			verifyEpochInit(t, ctx, tt.tid)
 		})
 	}
 }
@@ -100,12 +97,12 @@ func verifyEpochCache(t *testing.T, ctx *RaceContext, tid uint16, wantClock uint
 	}
 }
 
-// verifyThreadIsolation checks that other threads' clocks are unchanged.
+// verifyThreadIsolation checks that other threads' clocks are unchanged (still 0).
 func verifyThreadIsolation(t *testing.T, ctx *RaceContext) {
 	t.Helper()
 	for i := 0; i < vectorclock.MaxThreads; i++ {
 		if uint16(i) == ctx.TID {
-			continue
+			continue // Skip own TID - it has a non-zero clock
 		}
 		if ctx.C.Get(uint16(i)) != 0 {
 			t.Errorf("IncrementClock() affected other thread: C[%d] = %d, want 0",
@@ -115,36 +112,37 @@ func verifyThreadIsolation(t *testing.T, ctx *RaceContext) {
 }
 
 // TestIncrementClock tests logical clock advancement.
+// Note: Clock starts at 1 (not 0) to enable race detection.
 func TestIncrementClock(t *testing.T) {
 	tests := []struct {
 		name       string
 		tid        uint16
 		increments int
-		wantClock  uint32
+		wantClock  uint32 // Expected clock = 1 (initial) + increments
 	}{
 		{
 			name:       "single increment",
 			tid:        5,
 			increments: 1,
-			wantClock:  1,
+			wantClock:  2, // 1 (initial) + 1 increment
 		},
 		{
 			name:       "multiple increments",
 			tid:        10,
 			increments: 100,
-			wantClock:  100,
+			wantClock:  101, // 1 (initial) + 100 increments
 		},
 		{
 			name:       "zero increments",
 			tid:        0,
 			increments: 0,
-			wantClock:  0,
+			wantClock:  1, // Initial clock value (no increments)
 		},
 		{
 			name:       "max tid increments",
 			tid:        255,
 			increments: 42,
-			wantClock:  42,
+			wantClock:  43, // 1 (initial) + 42 increments
 		},
 	}
 
@@ -170,6 +168,7 @@ func TestIncrementClockEpochSync(t *testing.T) {
 	ctx := Alloc(42)
 
 	// Perform many increments and verify sync after each.
+	// Initial clock is 1, so after i increments, clock = 1 + i
 	for i := 1; i <= 1000; i++ {
 		ctx.IncrementClock()
 
@@ -181,9 +180,11 @@ func TestIncrementClockEpochSync(t *testing.T) {
 		}
 
 		// Verify epoch decodes to correct clock value.
+		// Clock = 1 (initial) + i (increments)
 		_, clock := ctx.Epoch.Decode()
-		if clock != uint64(i) {
-			t.Errorf("Iteration %d: Epoch clock = %d, want %d", i, clock, i)
+		wantClock := uint64(1 + i)
+		if clock != wantClock {
+			t.Errorf("Iteration %d: Epoch clock = %d, want %d", i, clock, wantClock)
 		}
 	}
 }
@@ -196,7 +197,7 @@ func TestGetEpoch(t *testing.T) {
 		increments int
 	}{
 		{
-			name:       "initial epoch (clock=0)",
+			name:       "initial epoch (clock=1)",
 			tid:        5,
 			increments: 0,
 		},
@@ -241,12 +242,14 @@ func TestGetEpoch(t *testing.T) {
 			}
 
 			// Verify epoch decodes correctly.
+			// Clock = 1 (initial) + increments
 			gotTID, gotClock := gotEpoch.Decode()
+			wantClock := uint64(1 + tt.increments)
 			if gotTID != tt.tid {
 				t.Errorf("GetEpoch().Decode() tid = %d, want %d", gotTID, tt.tid)
 			}
-			if gotClock != uint64(tt.increments) {
-				t.Errorf("GetEpoch().Decode() clock = %d, want %d", gotClock, tt.increments)
+			if gotClock != wantClock {
+				t.Errorf("GetEpoch().Decode() clock = %d, want %d", gotClock, wantClock)
 			}
 		})
 	}
@@ -270,7 +273,8 @@ func TestGetEpochMultipleCalls(t *testing.T) {
 	}
 
 	// Verify the epoch is correct.
-	wantEpoch := epoch.NewEpoch(7, 3)
+	// Initial clock = 1, after 3 increments = 4
+	wantEpoch := epoch.NewEpoch(7, 4) // 1 + 3 = 4
 	if e1 != wantEpoch {
 		t.Errorf("GetEpoch() = 0x%X, want 0x%X", e1, wantEpoch)
 	}
@@ -288,8 +292,9 @@ func TestTIDRange(t *testing.T) {
 			}
 
 			// Increment and verify epoch cache.
+			// Initial clock is 1, after one increment it should be 2.
 			ctx.IncrementClock()
-			wantEpoch := epoch.NewEpoch(uint16(tid), 1)
+			wantEpoch := epoch.NewEpoch(uint16(tid), 2) // 1 (initial) + 1 increment = 2
 			if ctx.Epoch != wantEpoch {
 				t.Errorf("TID %d: Epoch = 0x%X, want 0x%X", tid, ctx.Epoch, wantEpoch)
 			}
@@ -299,8 +304,8 @@ func TestTIDRange(t *testing.T) {
 			if gotTID != uint16(tid) {
 				t.Errorf("TID %d: Epoch.Decode() tid = %d, want %d", tid, gotTID, tid)
 			}
-			if gotClock != 1 {
-				t.Errorf("TID %d: Epoch.Decode() clock = %d, want 1", tid, gotClock)
+			if gotClock != 2 { // Clock should be 2 after one increment
+				t.Errorf("TID %d: Epoch.Decode() clock = %d, want 2", tid, gotClock)
 			}
 		})
 	}
@@ -343,14 +348,15 @@ func TestVectorClockIsolation(t *testing.T) {
 	ctx3.IncrementClock()
 
 	// Verify each context has correct clock.
-	if ctx1.C.Get(1) != 3 {
-		t.Errorf("ctx1.C[1] = %d, want 3", ctx1.C.Get(1))
+	// Initial clock is 1, so: final = 1 + increments
+	if ctx1.C.Get(1) != 4 { // 1 + 3 increments
+		t.Errorf("ctx1.C[1] = %d, want 4", ctx1.C.Get(1))
 	}
-	if ctx2.C.Get(2) != 1 {
-		t.Errorf("ctx2.C[2] = %d, want 1", ctx2.C.Get(2))
+	if ctx2.C.Get(2) != 2 { // 1 + 1 increment
+		t.Errorf("ctx2.C[2] = %d, want 2", ctx2.C.Get(2))
 	}
-	if ctx3.C.Get(3) != 2 {
-		t.Errorf("ctx3.C[3] = %d, want 2", ctx3.C.Get(3))
+	if ctx3.C.Get(3) != 3 { // 1 + 2 increments
+		t.Errorf("ctx3.C[3] = %d, want 3", ctx3.C.Get(3))
 	}
 
 	// Verify each context doesn't affect others' TID clocks.

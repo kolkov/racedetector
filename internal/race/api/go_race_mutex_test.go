@@ -88,9 +88,7 @@ func TestGoRace_Mutex(t *testing.T) {
 
 	races := RacesDetected()
 	if races == 0 {
-		// Known limitation - log but don't fail for now
-		t.Logf("KNOWN LIMITATION: Detector did not catch race before sync (races=%d)", races)
-		t.Skip("Skipping: detector limitation - accesses outside sync scope not tracked")
+		t.Errorf("False negative: failed to detect race before mutex sync (races=%d)", races)
 	}
 }
 

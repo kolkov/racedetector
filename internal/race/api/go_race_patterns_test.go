@@ -6,6 +6,7 @@
 package api
 
 import (
+	"runtime"
 	"sync"
 	"testing"
 	"unsafe"
@@ -712,16 +713,31 @@ func TestGoNoRace_IntRWClosuresSequential(t *testing.T) {
 	addrX := uintptr(unsafe.Pointer(&x))
 	addrY := uintptr(unsafe.Pointer(&y))
 	ch := make(chan int, 1)
+	var mu sync.Mutex
+	muAddr := uintptr(unsafe.Pointer(&mu))
 
+	RaceGoStart(0)
 	go func() {
+		defer RaceGoEnd()
 		RaceRead(addrX) // y = x
 		RaceWrite(addrY)
+		// Release clock to mutex for synchronization
+		mu.Lock()
+		RaceRelease(muAddr)
+		mu.Unlock()
 		ch <- 1
 	}()
 
 	<-ch // Wait for completion
 
+	// Acquire clock from mutex - establishes happens-before
+	mu.Lock()
+	RaceAcquire(muAddr)
+	mu.Unlock()
+
+	RaceGoStart(0)
 	go func() {
+		defer RaceGoEnd()
 		RaceWrite(addrX) // x = 1
 		ch <- 1
 	}()
@@ -1256,7 +1272,7 @@ func TestGoRace_StructFieldRW(t *testing.T) {
 
 // TestGoNoRace_ReturnStructInit tests struct initialization in return statement.
 // Simulates NewLog() pattern - struct returned while goroutine reads it.
-// The channel synchronization ensures happens-before relationship.
+// The spawn happens-before ensures child sees parent's write.
 func TestGoNoRace_ReturnStructInit(t *testing.T) {
 	Init()
 	defer Fini()
@@ -1270,13 +1286,18 @@ func TestGoNoRace_ReturnStructInit(t *testing.T) {
 		c := make(chan bool)
 		addr := uintptr(unsafe.Pointer(&l.x))
 
+		// Write FIRST, then spawn goroutine
+		// This establishes happens-before via spawn
+		RaceWrite(addr) // l = LogImpl{}
+
+		RaceGoStart(0)
 		go func() {
-			RaceRead(addr) // _ = l
+			defer RaceGoEnd()
+			RaceRead(addr) // _ = l (reads value written by parent before spawn)
 			c <- true
 		}()
 
-		RaceWrite(addr) // l = LogImpl{}
-		<-c             // Synchronization ensures no race
+		<-c // Wait for goroutine
 
 		return l
 	}
@@ -1337,7 +1358,7 @@ func TestGoRace_MapLenWrite(t *testing.T) {
 }
 
 // TestGoNoRace_StackPushPop tests stack operations with pointer sharing.
-// Stack passed to goroutine, then modified - synchronized by goroutine completion.
+// Stack passed to goroutine, then modified - synchronized by mutex.
 func TestGoNoRace_StackPushPop(t *testing.T) {
 	Init()
 	defer Fini()
@@ -1347,14 +1368,27 @@ func TestGoNoRace_StackPushPop(t *testing.T) {
 	var s stack
 	addr := uintptr(unsafe.Pointer(&s))
 	ch := make(chan bool, 1)
+	var mu sync.Mutex
+	muAddr := uintptr(unsafe.Pointer(&mu))
 
+	RaceGoStart(0)
 	go func(st *stack) {
+		defer RaceGoEnd()
 		_ = st         // Use parameter
 		RaceRead(addr) // Access stack
+		// Release clock to mutex for synchronization
+		mu.Lock()
+		RaceRelease(muAddr)
+		mu.Unlock()
 		ch <- true
 	}(&s)
 
 	<-ch // Wait for goroutine to complete
+
+	// Acquire clock from mutex - establishes happens-before
+	mu.Lock()
+	RaceAcquire(muAddr)
+	mu.Unlock()
 
 	// Now modify stack
 	RaceWrite(addr)
@@ -1404,7 +1438,9 @@ func TestGoNoRace_ReturnValue(t *testing.T) {
 		retVal = 42
 		RaceWrite(addr)
 
+		RaceGoStart(0)
 		go func() {
+			defer RaceGoEnd()
 			RaceRead(addr) // _ = retVal
 			c <- 1
 		}()
@@ -1582,10 +1618,13 @@ func TestGoRace_ChannelFieldRace(t *testing.T) {
 	rc := &RpcChan{c: make(chan bool, 1)}
 	addrFlag := uintptr(unsafe.Pointer(&rc.flag))
 	ch := make(chan bool, 2)
+	start := make(chan struct{})
 	var mu1, mu2 sync.Mutex
 
 	// Goroutine 1
 	go func() {
+		<-start
+		runtime.Gosched()
 		mu1.Lock()
 		RaceAcquire(uintptr(unsafe.Pointer(&mu1)))
 		RaceWrite(addrFlag)
@@ -1597,6 +1636,8 @@ func TestGoRace_ChannelFieldRace(t *testing.T) {
 
 	// Goroutine 2 (different mutex!)
 	go func() {
+		<-start
+		runtime.Gosched()
 		mu2.Lock()
 		RaceAcquire(uintptr(unsafe.Pointer(&mu2)))
 		RaceWrite(addrFlag)
@@ -1606,6 +1647,7 @@ func TestGoRace_ChannelFieldRace(t *testing.T) {
 		ch <- true
 	}()
 
+	close(start)
 	<-ch
 	<-ch
 
@@ -1684,7 +1726,9 @@ func TestGoNoRace_GlobalVarInit(t *testing.T) {
 	global = 42
 
 	ch := make(chan bool, 1)
+	RaceGoStart(0)
 	go func() {
+		defer RaceGoEnd()
 		RaceRead(addr)
 		_ = global
 		ch <- true
@@ -1952,14 +1996,27 @@ func TestGoNoRace_ForInit(t *testing.T) {
 	var x int
 	addr := uintptr(unsafe.Pointer(&x))
 	ch := make(chan bool, 1)
+	var mu sync.Mutex
+	muAddr := uintptr(unsafe.Pointer(&mu))
 
+	RaceGoStart(0)
 	go func() {
+		defer RaceGoEnd()
 		RaceWrite(addr)
 		x = 1
+		// Release clock to mutex for synchronization
+		mu.Lock()
+		RaceRelease(muAddr)
+		mu.Unlock()
 		ch <- true
 	}()
 
 	<-ch // Wait for write to complete
+
+	// Acquire clock from mutex - establishes happens-before
+	mu.Lock()
+	RaceAcquire(muAddr)
+	mu.Unlock()
 
 	// Init happens after goroutine completes
 	for x = 0; x < 1; x++ {
@@ -2025,9 +2082,9 @@ func TestGoRace_ForCondition(t *testing.T) {
 	go func() {
 		mu1.Lock()
 		RaceAcquire(uintptr(unsafe.Pointer(&mu1)))
-		for i := 0; i < x; i++ { // Read x in condition
-			RaceRead(addr)
-		}
+		// Explicitly read x to simulate condition check
+		RaceRead(addr)
+		_ = x
 		RaceRelease(uintptr(unsafe.Pointer(&mu1)))
 		mu1.Unlock()
 		ch <- true

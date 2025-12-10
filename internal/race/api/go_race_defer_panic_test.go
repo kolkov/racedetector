@@ -310,13 +310,13 @@ func TestGoNoRace_DeferOrder(t *testing.T) {
 			RaceWrite(xAddr)
 			x = 1
 			RaceRelease(muAddr)
+			done <- true // Signal AFTER all defers complete (LIFO order)
 		}()
 		defer func() {
 			RaceAcquire(muAddr)
 			RaceWrite(xAddr)
 			x = 2
 			RaceRelease(muAddr)
-			done <- true
 		}()
 	}()
 

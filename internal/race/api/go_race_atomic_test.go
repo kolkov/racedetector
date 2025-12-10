@@ -14,6 +14,8 @@ import (
 )
 
 // TestGoNoRace_AtomicAddInt64 - atomic Add provides happens-before.
+//
+// NOTE: Uses actual mutex to serialize RaceAcquire/RaceRelease calls for proper clock propagation.
 func TestGoNoRace_AtomicAddInt64(t *testing.T) {
 	Init()
 	defer Fini()
@@ -24,26 +26,34 @@ func TestGoNoRace_AtomicAddInt64(t *testing.T) {
 	muAddr := uintptr(unsafe.Pointer(&mu))
 
 	ch := make(chan bool, 2)
+	RaceGoStart(0)
 	go func() {
+		defer RaceGoEnd()
 		simulateAccess(addrOf(&x1), true) // x1 = 1
 		// Simulate atomic.AddInt64(&s, 1)
+		mu.Lock()
 		RaceAcquire(muAddr)
 		s++
 		finalVal := s
 		RaceRelease(muAddr)
+		mu.Unlock()
 
 		if finalVal == 2 {
 			simulateAccess(addrOf(&x2), true) // x2 = 1
 		}
 		ch <- true
 	}()
+	RaceGoStart(0)
 	go func() {
+		defer RaceGoEnd()
 		simulateAccess(addrOf(&x2), true) // x2 = 1
 		// Simulate atomic.AddInt64(&s, 1)
+		mu.Lock()
 		RaceAcquire(muAddr)
 		s++
 		finalVal := s
 		RaceRelease(muAddr)
+		mu.Unlock()
 
 		if finalVal == 2 {
 			simulateAccess(addrOf(&x1), true) // x1 = 1
@@ -119,6 +129,8 @@ func TestGoRace_AtomicAddInt64(t *testing.T) {
 }
 
 // TestGoNoRace_AtomicAddInt32 - atomic Add on int32.
+//
+// NOTE: Uses actual mutex to serialize RaceAcquire/RaceRelease calls for proper clock propagation.
 func TestGoNoRace_AtomicAddInt32(t *testing.T) {
 	Init()
 	defer Fini()
@@ -129,24 +141,32 @@ func TestGoNoRace_AtomicAddInt32(t *testing.T) {
 	muAddr := uintptr(unsafe.Pointer(&mu))
 
 	ch := make(chan bool, 2)
+	RaceGoStart(0)
 	go func() {
+		defer RaceGoEnd()
 		simulateAccess(addrOf(&x1), true) // x1 = 1
+		mu.Lock()
 		RaceAcquire(muAddr)
 		s++
 		finalVal := s
 		RaceRelease(muAddr)
+		mu.Unlock()
 
 		if finalVal == 2 {
 			simulateAccess(addrOf(&x2), true) // x2 = 1
 		}
 		ch <- true
 	}()
+	RaceGoStart(0)
 	go func() {
+		defer RaceGoEnd()
 		simulateAccess(addrOf(&x2), true) // x2 = 1
+		mu.Lock()
 		RaceAcquire(muAddr)
 		s++
 		finalVal := s
 		RaceRelease(muAddr)
+		mu.Unlock()
 
 		if finalVal == 2 {
 			simulateAccess(addrOf(&x1), true) // x1 = 1
@@ -162,6 +182,8 @@ func TestGoNoRace_AtomicAddInt32(t *testing.T) {
 }
 
 // TestGoNoRace_AtomicLoadAddInt32 - Load followed by Add.
+//
+// NOTE: Uses actual mutex to serialize RaceAcquire/RaceRelease calls for proper clock propagation.
 func TestGoNoRace_AtomicLoadAddInt32(t *testing.T) {
 	Init()
 	defer Fini()
@@ -171,19 +193,25 @@ func TestGoNoRace_AtomicLoadAddInt32(t *testing.T) {
 	var mu sync.Mutex
 	muAddr := uintptr(unsafe.Pointer(&mu))
 
+	RaceGoStart(0)
 	go func() {
+		defer RaceGoEnd()
 		simulateAccess(addrOf(&x), true) // x = 2
 		// Simulate atomic.AddInt32(&s, 1)
+		mu.Lock()
 		RaceAcquire(muAddr)
 		s++
 		RaceRelease(muAddr)
+		mu.Unlock()
 	}()
 
 	// Spin until atomic load sees 1
 	for {
+		mu.Lock()
 		RaceAcquire(muAddr)
 		val := s
 		RaceRelease(muAddr)
+		mu.Unlock()
 		if val == 1 {
 			break
 		}
@@ -197,6 +225,8 @@ func TestGoNoRace_AtomicLoadAddInt32(t *testing.T) {
 }
 
 // TestGoNoRace_AtomicLoadStoreInt32 - Load and Store sync.
+//
+// NOTE: Uses actual mutex to serialize RaceAcquire/RaceRelease calls for proper clock propagation.
 func TestGoNoRace_AtomicLoadStoreInt32(t *testing.T) {
 	Init()
 	defer Fini()
@@ -206,19 +236,25 @@ func TestGoNoRace_AtomicLoadStoreInt32(t *testing.T) {
 	var mu sync.Mutex
 	muAddr := uintptr(unsafe.Pointer(&mu))
 
+	RaceGoStart(0)
 	go func() {
+		defer RaceGoEnd()
 		simulateAccess(addrOf(&x), true) // x = 2
 		// Simulate atomic.StoreInt32(&s, 1)
+		mu.Lock()
 		RaceAcquire(muAddr)
 		s = 1
 		RaceRelease(muAddr)
+		mu.Unlock()
 	}()
 
 	// Spin until atomic load sees 1
 	for {
+		mu.Lock()
 		RaceAcquire(muAddr)
 		val := s
 		RaceRelease(muAddr)
+		mu.Unlock()
 		if val == 1 {
 			break
 		}
@@ -232,6 +268,8 @@ func TestGoNoRace_AtomicLoadStoreInt32(t *testing.T) {
 }
 
 // TestGoNoRace_AtomicStoreCASInt32 - Store then CAS.
+//
+// NOTE: Uses actual mutex to serialize RaceAcquire/RaceRelease calls for proper clock propagation.
 func TestGoNoRace_AtomicStoreCASInt32(t *testing.T) {
 	Init()
 	defer Fini()
@@ -241,16 +279,21 @@ func TestGoNoRace_AtomicStoreCASInt32(t *testing.T) {
 	var mu sync.Mutex
 	muAddr := uintptr(unsafe.Pointer(&mu))
 
+	RaceGoStart(0)
 	go func() {
+		defer RaceGoEnd()
 		simulateAccess(addrOf(&x), true) // x = 2
 		// Simulate atomic.StoreInt32(&s, 1)
+		mu.Lock()
 		RaceAcquire(muAddr)
 		s = 1
 		RaceRelease(muAddr)
+		mu.Unlock()
 	}()
 
 	// Spin until CAS succeeds
 	for {
+		mu.Lock()
 		RaceAcquire(muAddr)
 		swapped := false
 		if s == 1 {
@@ -258,6 +301,7 @@ func TestGoNoRace_AtomicStoreCASInt32(t *testing.T) {
 			swapped = true
 		}
 		RaceRelease(muAddr)
+		mu.Unlock()
 		if swapped {
 			break
 		}
@@ -271,6 +315,8 @@ func TestGoNoRace_AtomicStoreCASInt32(t *testing.T) {
 }
 
 // TestGoNoRace_AtomicCASLoadInt32 - CAS then Load.
+//
+// NOTE: Uses actual mutex to serialize RaceAcquire/RaceRelease calls for proper clock propagation.
 func TestGoNoRace_AtomicCASLoadInt32(t *testing.T) {
 	Init()
 	defer Fini()
@@ -280,21 +326,27 @@ func TestGoNoRace_AtomicCASLoadInt32(t *testing.T) {
 	var mu sync.Mutex
 	muAddr := uintptr(unsafe.Pointer(&mu))
 
+	RaceGoStart(0)
 	go func() {
+		defer RaceGoEnd()
 		simulateAccess(addrOf(&x), true) // x = 2
 		// Simulate atomic.CompareAndSwapInt32(&s, 0, 1)
+		mu.Lock()
 		RaceAcquire(muAddr)
 		if s == 0 {
 			s = 1
 		}
 		RaceRelease(muAddr)
+		mu.Unlock()
 	}()
 
 	// Spin until load sees 1
 	for {
+		mu.Lock()
 		RaceAcquire(muAddr)
 		val := s
 		RaceRelease(muAddr)
+		mu.Unlock()
 		if val == 1 {
 			break
 		}
@@ -308,6 +360,8 @@ func TestGoNoRace_AtomicCASLoadInt32(t *testing.T) {
 }
 
 // TestGoNoRace_AtomicCASCASInt32 - CAS followed by CAS.
+//
+// NOTE: Uses actual mutex to serialize RaceAcquire/RaceRelease calls for proper clock propagation.
 func TestGoNoRace_AtomicCASCASInt32(t *testing.T) {
 	Init()
 	defer Fini()
@@ -317,18 +371,23 @@ func TestGoNoRace_AtomicCASCASInt32(t *testing.T) {
 	var mu sync.Mutex
 	muAddr := uintptr(unsafe.Pointer(&mu))
 
+	RaceGoStart(0)
 	go func() {
+		defer RaceGoEnd()
 		simulateAccess(addrOf(&x), true) // x = 2
 		// Simulate atomic.CompareAndSwapInt32(&s, 0, 1)
+		mu.Lock()
 		RaceAcquire(muAddr)
 		if s == 0 {
 			s = 1
 		}
 		RaceRelease(muAddr)
+		mu.Unlock()
 	}()
 
 	// Spin until CAS succeeds
 	for {
+		mu.Lock()
 		RaceAcquire(muAddr)
 		swapped := false
 		if s == 1 {
@@ -336,6 +395,7 @@ func TestGoNoRace_AtomicCASCASInt32(t *testing.T) {
 			swapped = true
 		}
 		RaceRelease(muAddr)
+		mu.Unlock()
 		if swapped {
 			break
 		}
@@ -349,6 +409,8 @@ func TestGoNoRace_AtomicCASCASInt32(t *testing.T) {
 }
 
 // TestGoNoRace_AtomicCASCASInt32_2 - Two CAS competing.
+//
+// NOTE: Uses actual mutex to serialize RaceAcquire/RaceRelease calls for proper clock propagation.
 func TestGoNoRace_AtomicCASCASInt32_2(t *testing.T) {
 	Init()
 	defer Fini()
@@ -359,9 +421,12 @@ func TestGoNoRace_AtomicCASCASInt32_2(t *testing.T) {
 	muAddr := uintptr(unsafe.Pointer(&mu))
 
 	ch := make(chan bool, 2)
+	RaceGoStart(0)
 	go func() {
+		defer RaceGoEnd()
 		simulateAccess(addrOf(&x1), true) // x1 = 1
 		// Simulate atomic.CompareAndSwapInt32(&s, 0, 1)
+		mu.Lock()
 		RaceAcquire(muAddr)
 		swapped := false
 		if s == 0 {
@@ -369,15 +434,19 @@ func TestGoNoRace_AtomicCASCASInt32_2(t *testing.T) {
 			swapped = true
 		}
 		RaceRelease(muAddr)
+		mu.Unlock()
 
 		if !swapped {
 			simulateAccess(addrOf(&x2), true) // x2 = 1
 		}
 		ch <- true
 	}()
+	RaceGoStart(0)
 	go func() {
+		defer RaceGoEnd()
 		simulateAccess(addrOf(&x2), true) // x2 = 1
 		// Simulate atomic.CompareAndSwapInt32(&s, 0, 1)
+		mu.Lock()
 		RaceAcquire(muAddr)
 		swapped := false
 		if s == 0 {
@@ -385,6 +454,7 @@ func TestGoNoRace_AtomicCASCASInt32_2(t *testing.T) {
 			swapped = true
 		}
 		RaceRelease(muAddr)
+		mu.Unlock()
 
 		if !swapped {
 			simulateAccess(addrOf(&x1), true) // x1 = 1
@@ -400,6 +470,8 @@ func TestGoNoRace_AtomicCASCASInt32_2(t *testing.T) {
 }
 
 // TestGoNoRace_AtomicLoadInt64 - Load on int64.
+//
+// NOTE: Uses actual mutex to serialize RaceAcquire/RaceRelease calls for proper clock propagation.
 func TestGoNoRace_AtomicLoadInt64(t *testing.T) {
 	Init()
 	defer Fini()
@@ -409,19 +481,25 @@ func TestGoNoRace_AtomicLoadInt64(t *testing.T) {
 	var mu sync.Mutex
 	muAddr := uintptr(unsafe.Pointer(&mu))
 
+	RaceGoStart(0)
 	go func() {
+		defer RaceGoEnd()
 		simulateAccess(addrOf(&x), true) // x = 2
 		// Simulate atomic.AddInt64(&s, 1)
+		mu.Lock()
 		RaceAcquire(muAddr)
 		s++
 		RaceRelease(muAddr)
+		mu.Unlock()
 	}()
 
 	// Spin until load sees 1
 	for {
+		mu.Lock()
 		RaceAcquire(muAddr)
 		val := s
 		RaceRelease(muAddr)
+		mu.Unlock()
 		if val == 1 {
 			break
 		}
@@ -435,6 +513,8 @@ func TestGoNoRace_AtomicLoadInt64(t *testing.T) {
 }
 
 // TestGoNoRace_AtomicCASCASUInt64 - CAS on uint64.
+//
+// NOTE: Uses actual mutex to serialize RaceAcquire/RaceRelease calls for proper clock propagation.
 func TestGoNoRace_AtomicCASCASUInt64(t *testing.T) {
 	Init()
 	defer Fini()
@@ -444,18 +524,23 @@ func TestGoNoRace_AtomicCASCASUInt64(t *testing.T) {
 	var mu sync.Mutex
 	muAddr := uintptr(unsafe.Pointer(&mu))
 
+	RaceGoStart(0)
 	go func() {
+		defer RaceGoEnd()
 		simulateAccess(addrOf(&x), true) // x = 2
 		// Simulate atomic.CompareAndSwapUint64(&s, 0, 1)
+		mu.Lock()
 		RaceAcquire(muAddr)
 		if s == 0 {
 			s = 1
 		}
 		RaceRelease(muAddr)
+		mu.Unlock()
 	}()
 
 	// Spin until CAS succeeds
 	for {
+		mu.Lock()
 		RaceAcquire(muAddr)
 		swapped := false
 		if s == 1 {
@@ -463,6 +548,7 @@ func TestGoNoRace_AtomicCASCASUInt64(t *testing.T) {
 			swapped = true
 		}
 		RaceRelease(muAddr)
+		mu.Unlock()
 		if swapped {
 			break
 		}
@@ -476,6 +562,8 @@ func TestGoNoRace_AtomicCASCASUInt64(t *testing.T) {
 }
 
 // TestGoNoRace_AtomicLoadStorePointer - Load/Store pointer.
+//
+// NOTE: Uses actual mutex to serialize RaceAcquire/RaceRelease calls for proper clock propagation.
 func TestGoNoRace_AtomicLoadStorePointer(t *testing.T) {
 	Init()
 	defer Fini()
@@ -487,19 +575,25 @@ func TestGoNoRace_AtomicLoadStorePointer(t *testing.T) {
 	y := 2
 	p := unsafe.Pointer(&y)
 
+	RaceGoStart(0)
 	go func() {
+		defer RaceGoEnd()
 		simulateAccess(addrOf(&x), true) // x = 2
 		// Simulate atomic.StorePointer(&s, p)
+		mu.Lock()
 		RaceAcquire(muAddr)
 		s = p
 		RaceRelease(muAddr)
+		mu.Unlock()
 	}()
 
 	// Spin until load sees p
 	for {
+		mu.Lock()
 		RaceAcquire(muAddr)
 		val := s
 		RaceRelease(muAddr)
+		mu.Unlock()
 		if val == p {
 			break
 		}
@@ -513,6 +607,8 @@ func TestGoNoRace_AtomicLoadStorePointer(t *testing.T) {
 }
 
 // TestGoNoRace_AtomicStoreCASUint64 - Store then CAS uint64.
+//
+// NOTE: Uses actual mutex to serialize RaceAcquire/RaceRelease calls for proper clock propagation.
 func TestGoNoRace_AtomicStoreCASUint64(t *testing.T) {
 	Init()
 	defer Fini()
@@ -522,16 +618,21 @@ func TestGoNoRace_AtomicStoreCASUint64(t *testing.T) {
 	var mu sync.Mutex
 	muAddr := uintptr(unsafe.Pointer(&mu))
 
+	RaceGoStart(0)
 	go func() {
+		defer RaceGoEnd()
 		simulateAccess(addrOf(&x), true) // x = 2
 		// Simulate atomic.StoreUint64(&s, 1)
+		mu.Lock()
 		RaceAcquire(muAddr)
 		s = 1
 		RaceRelease(muAddr)
+		mu.Unlock()
 	}()
 
 	// Spin until CAS succeeds
 	for {
+		mu.Lock()
 		RaceAcquire(muAddr)
 		swapped := false
 		if s == 1 {
@@ -539,6 +640,7 @@ func TestGoNoRace_AtomicStoreCASUint64(t *testing.T) {
 			swapped = true
 		}
 		RaceRelease(muAddr)
+		mu.Unlock()
 		if swapped {
 			break
 		}
@@ -655,6 +757,7 @@ func TestGoRace_AtomicAddStore(t *testing.T) {
 
 	go func() {
 		<-start
+		runtime.Gosched()
 		// Simulate atomic.AddUint64(&a, 1) with mu1
 		RaceAcquire(mu1Addr)
 		simulateAccess(addrOf(&a), true) // a++
@@ -664,6 +767,7 @@ func TestGoRace_AtomicAddStore(t *testing.T) {
 
 	go func() {
 		<-start
+		runtime.Gosched()
 		// Plain store with DIFFERENT mutex (NO real synchronization) - RACE!
 		RaceAcquire(mu2Addr)
 		simulateAccess(addrOf(&a), true) // a = 42
