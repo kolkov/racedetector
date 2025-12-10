@@ -48,7 +48,7 @@ func TestOnWrite_FirstAccess(t *testing.T) {
 	}
 
 	// Check that write epoch was set (should be non-zero after IncrementClock).
-	if vs.W == 0 {
+	if vs.GetW() == 0 {
 		t.Error("Write epoch not set after first write")
 	}
 }
@@ -69,11 +69,11 @@ func TestOnWrite_SameEpochFastPath(t *testing.T) {
 	if vs == nil {
 		t.Fatal("Shadow cell not created")
 	}
-	firstWriteEpoch := vs.W
+	firstWriteEpoch := vs.GetW()
 
 	// Manually set the write epoch back to test same-epoch path.
-	// In real scenario, this would happen when vs.W == currentEpoch on entry.
-	vs.W = initialEpoch
+	// In real scenario, this would happen when vs.GetW() == currentEpoch on entry.
+	vs.SetW(initialEpoch)
 
 	// Second write should hit fast path (same epoch).
 	d.OnWrite(addr, ctx)
@@ -83,9 +83,10 @@ func TestOnWrite_SameEpochFastPath(t *testing.T) {
 		t.Errorf("Same-epoch write reported race, want 0 races")
 	}
 
-	// Note: In the actual fast path, the epoch won't change because we return early.
-	// This test verifies the logic when epochs match.
-	_ = firstWriteEpoch // Suppress unused warning
+	// Verify first write epoch was captured
+	if firstWriteEpoch == 0 {
+		t.Log("First write epoch was zero (expected for fresh VarState)")
+	}
 }
 
 // TestOnWrite_WriteWriteRace tests detection of write-write races.
@@ -110,7 +111,7 @@ func TestOnWrite_WriteWriteRace(t *testing.T) {
 	}
 
 	// Set previous write to epoch (1, 20) - a "future" write.
-	vs.W = epoch.NewEpoch(1, 20)
+	vs.SetW(epoch.NewEpoch(1, 20))
 
 	// Reset context to earlier time (1, 5) to create a race condition.
 	ctx.C.Set(1, 5)
@@ -286,12 +287,12 @@ func TestOnWrite_UpdatesShadowMemory(t *testing.T) {
 
 	// Verify write epoch was updated (should be after initial due to IncrementClock).
 	// The exact value depends on when IncrementClock is called in OnWrite.
-	if vs.W == 0 {
+	if vs.GetW() == 0 {
 		t.Error("Write epoch not updated in shadow memory")
 	}
 
 	// The write epoch should be based on the context's TID (1).
-	tid, _ := vs.W.Decode()
+	tid, _ := vs.GetW().Decode()
 	if tid != 1 {
 		t.Errorf("Write epoch TID = %d, want 1", tid)
 	}
@@ -333,9 +334,9 @@ func TestRacesDetected(t *testing.T) {
 	// Trigger a race by manipulating epochs.
 	addr := uintptr(0xB000)
 	vs := d.shadowMemory.GetOrCreate(addr)
-	vs.W = epoch.NewEpoch(1, 100) // Future write
-	vs.SetExclusiveWriter(-1)     // Force shared state for full FastTrack check
-	ctx.C.Set(1, 50)              // Earlier time
+	vs.SetW(epoch.NewEpoch(1, 100)) // Future write))
+	vs.SetExclusiveWriter(-1)       // Force shared state for full FastTrack check
+	ctx.C.Set(1, 50)                // Earlier time
 	ctx.Epoch = epoch.NewEpoch(1, 50)
 
 	// Suppress stderr for this test.
@@ -363,7 +364,7 @@ func TestReset(t *testing.T) {
 
 	// Trigger a race to increment counter.
 	vs := d.shadowMemory.GetOrCreate(addr)
-	vs.W = epoch.NewEpoch(1, 100)
+	vs.SetW(epoch.NewEpoch(1, 100))
 	vs.SetExclusiveWriter(-1) // Force shared state for full FastTrack check
 	ctx.C.Set(1, 50)
 	ctx.Epoch = epoch.NewEpoch(1, 50)
@@ -629,7 +630,7 @@ func TestOnRead_WriteReadRace(t *testing.T) {
 	vs := d.shadowMemory.GetOrCreate(addr)
 
 	// Set previous write to epoch (1, 20) - a "future" write.
-	vs.W = epoch.NewEpoch(1, 20)
+	vs.SetW(epoch.NewEpoch(1, 20))
 
 	// Set current context to earlier time (1, 5) to create race.
 	ctx.C.Set(1, 5)
@@ -675,7 +676,7 @@ func TestOnRead_NoRaceWithHappensBefore(t *testing.T) {
 
 	// Simulate a write at epoch (1, 10).
 	vs := d.shadowMemory.GetOrCreate(addr)
-	vs.W = epoch.NewEpoch(1, 10)
+	vs.SetW(epoch.NewEpoch(1, 10))
 
 	// Set context to later time (1, 20) - read happens-after write.
 	ctx.C.Set(1, 20)
@@ -715,7 +716,7 @@ func TestOnRead_NoWriteBefore(t *testing.T) {
 	}
 
 	// Write epoch should still be zero (no write occurred).
-	if vs.W != 0 {
+	if vs.GetW() != 0 {
 		t.Error("Write epoch should be zero (no write occurred)")
 	}
 }

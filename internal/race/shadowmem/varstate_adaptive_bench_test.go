@@ -253,7 +253,7 @@ func BenchmarkVarState_Write_Demote_FastPath(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		// Write: Update W, clear read state (unpromoted).
-		vs.W = writeEpoch
+		vs.SetW(writeEpoch)
 		vs.SetReadEpoch(0)
 	}
 }
@@ -272,7 +272,7 @@ func BenchmarkVarState_Write_Demote_SlowPath(b *testing.B) {
 		b.StartTimer()
 
 		// Write: Update W, clear read state, demote.
-		vs.W = writeEpoch
+		vs.SetW(writeEpoch)
 		vs.SetReadEpoch(0)
 		vs.readClock = nil
 	}
@@ -281,7 +281,7 @@ func BenchmarkVarState_Write_Demote_SlowPath(b *testing.B) {
 // BenchmarkVarState_String_Unpromoted benchmarks String() for unpromoted state.
 func BenchmarkVarState_String_Unpromoted(b *testing.B) {
 	vs := NewVarState()
-	vs.W = epoch.NewEpoch(5, 100)
+	vs.SetW(epoch.NewEpoch(5, 100))
 	vs.SetReadEpoch(epoch.NewEpoch(3, 50))
 
 	b.ReportAllocs()
@@ -295,7 +295,7 @@ func BenchmarkVarState_String_Unpromoted(b *testing.B) {
 // BenchmarkVarState_String_Promoted benchmarks String() for promoted state.
 func BenchmarkVarState_String_Promoted(b *testing.B) {
 	vs := NewVarState()
-	vs.W = epoch.NewEpoch(5, 100)
+	vs.SetW(epoch.NewEpoch(5, 100))
 	vc := vectorclock.New()
 	vc.Set(3, 50)
 	vc.Set(7, 60)
@@ -312,7 +312,7 @@ func BenchmarkVarState_String_Promoted(b *testing.B) {
 // BenchmarkVarState_Reset_Unpromoted benchmarks Reset() on unpromoted state.
 func BenchmarkVarState_Reset_Unpromoted(b *testing.B) {
 	vs := NewVarState()
-	vs.W = epoch.NewEpoch(5, 100)
+	vs.SetW(epoch.NewEpoch(5, 100))
 	vs.SetReadEpoch(epoch.NewEpoch(3, 50))
 
 	b.ReportAllocs()
@@ -321,7 +321,7 @@ func BenchmarkVarState_Reset_Unpromoted(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		vs.Reset()
 		// Re-initialize for next iteration.
-		vs.W = epoch.NewEpoch(5, 100)
+		vs.SetW(epoch.NewEpoch(5, 100))
 		vs.SetReadEpoch(epoch.NewEpoch(3, 50))
 	}
 }

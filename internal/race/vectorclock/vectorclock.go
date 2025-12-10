@@ -11,7 +11,10 @@
 // Performance targets: Join < 500ns, LessOrEqual < 300ns, zero allocations.
 package vectorclock
 
-import "strings"
+import (
+	"strings"
+	"sync"
+)
 
 const (
 	// MaxThreads is the maximum number of concurrent threads supported.
@@ -29,6 +32,26 @@ const (
 	// v0.4 will add dynamic TID mapping for unlimited goroutines with compact storage.
 	MaxThreads = 65536
 )
+
+// vcPool is a sync.Pool for VectorClock reuse to reduce GC pressure.
+//
+// VectorClock is 256KB per allocation, so reusing them is critical for performance.
+// The pool is used by NewFromPool() and Release() for lifecycle management.
+//
+// Performance impact:
+//   - Reduces allocations for VectorClock-heavy workloads (read-shared patterns)
+//   - Lower GC pressure and latency
+//   - Expected 5-10% overall improvement in read-heavy scenarios
+//
+// Usage:
+//   - NewFromPool(): Get VectorClock from pool (or allocate new if pool empty)
+//   - Release(): Return VectorClock to pool for reuse
+//   - New(): Still available for non-pooled allocations (backward compatibility)
+var vcPool = sync.Pool{
+	New: func() interface{} {
+		return &VectorClock{}
+	},
+}
 
 // VectorClock represents logical time across multiple threads.
 //
@@ -53,8 +76,84 @@ type VectorClock struct {
 //
 // All thread clocks start at 0, representing the beginning of logical time.
 // Returns a pointer to avoid copying the 1KB array on return.
+//
+// NOTE: For pooled allocations, use NewFromPool() instead to reduce GC pressure.
+// This function is kept for backward compatibility and non-pooled use cases.
 func New() *VectorClock {
 	return &VectorClock{}
+}
+
+// NewFromPool gets a VectorClock from the pool or creates a new one.
+//
+// This is the RECOMMENDED way to allocate VectorClocks in hot paths.
+// The returned VectorClock is guaranteed to be in reset state (all zeros).
+//
+// VectorClock lifecycle with pooling:
+//  1. Acquire: vc := NewFromPool()
+//  2. Use: vc.Set(), vc.Join(), vc.LessOrEqual(), etc.
+//  3. Release: vc.Release() when no longer needed
+//
+// Performance:
+//   - Reuses 256KB allocations instead of creating new ones
+//   - Reduces GC pressure significantly in read-heavy workloads
+//   - Expected 5-10% overall improvement
+//
+// Thread Safety: sync.Pool is goroutine-safe.
+//
+// Example:
+//
+//	vc := vectorclock.NewFromPool()
+//	defer vc.Release()  // Return to pool when done
+//	vc.Set(tid, clock)
+//	// ... use vc ...
+func NewFromPool() *VectorClock {
+	vc := vcPool.Get().(*VectorClock)
+	vc.Reset() // Ensure clean state
+	return vc
+}
+
+// Release returns the VectorClock to the pool for reuse.
+//
+// This should be called when the VectorClock is no longer needed.
+// After Release(), the VectorClock must not be used again.
+//
+// CRITICAL: Only release VectorClocks that are NOT referenced elsewhere!
+// Common mistake: Releasing a VectorClock that is still stored in VarState.
+//
+// Safe to call on nil VectorClock (no-op).
+//
+// Thread Safety: sync.Pool is goroutine-safe.
+//
+// Example:
+//
+//	vc := vectorclock.NewFromPool()
+//	// ... use vc ...
+//	vc.Release()  // Return to pool
+//	// vc must NOT be used after this point!
+func (vc *VectorClock) Release() {
+	if vc != nil {
+		vcPool.Put(vc)
+	}
+}
+
+// Reset clears the VectorClock to zero state.
+//
+// This is called by NewFromPool() to ensure clean state when reusing from pool.
+// Can also be called manually to reset a VectorClock for reuse.
+//
+// Only clears up to maxTID+1 elements for efficiency (sparse optimization).
+// Sets maxTID to 0 to represent empty clock.
+//
+// Performance: Target <100ns for typical sparse clocks (~100 active threads).
+//
+// Thread Safety: Not thread-safe, caller must synchronize.
+func (vc *VectorClock) Reset() {
+	// Clear all clock values up to maxTID (sparse-aware).
+	// Use uint32 loop counter to avoid uint16 overflow at maxTID=65535.
+	for i := uint32(0); i <= uint32(vc.maxTID); i++ {
+		vc.clocks[i] = 0
+	}
+	vc.maxTID = 0
 }
 
 // Clone creates a deep copy of the vector clock.

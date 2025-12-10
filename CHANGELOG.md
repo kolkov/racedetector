@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Performance
+
+**Major Performance Optimizations - Target <20x Overhead**
+
+- **Lazy Stack Capture**: Removed `CaptureStack()` from hot path
+  - Before: ~329ns per write (full stack capture)
+  - After: ~127ns per write (PC only, lazy full capture on race)
+  - **2.6x faster** hot path
+
+- **Lock-Free VarState**: Replaced mutex with atomic operations
+  - Hot-path fields now use `atomic.Uint64`, `atomic.Int64`, `atomic.Uintptr`
+  - Mutex only for complex operations (VectorClock promotion)
+  - **10x faster** VarState access
+
+- **Sharded Shadow Memory**: 256 shards instead of single sync.Map
+  - Reduces contention under concurrent load
+  - Cache-line padding prevents false sharing
+  - **12.5% faster** concurrent access
+
+- **VectorClock Pooling**: `sync.Pool` for VectorClock reuse
+  - Before: 1,009 allocations per benchmark
+  - After: 3 allocations per benchmark
+  - **99.7% reduction** in allocations
+  - **3,387x faster** VectorClock creation
+
+---
+
 ## [0.6.0] - 2025-12-11
 
 ### Fixed

@@ -54,6 +54,9 @@ type RaceContext struct {
 // - Two accesses at clock 0 would appear to "happen-before" each other
 // - Starting at 1 ensures unsynchronized accesses are detected as races
 //
+// Pooling: Uses pooled VectorClock allocation to reduce GC pressure.
+// VectorClock is released back to pool when goroutine ends (racegoend).
+//
 // Example:
 //
 //	ctx := Alloc(5)
@@ -63,7 +66,7 @@ type RaceContext struct {
 func Alloc(tid uint16) *RaceContext {
 	ctx := &RaceContext{
 		TID: tid,
-		C:   vectorclock.New(),
+		C:   vectorclock.NewFromPool(),
 	}
 	// Initialize epoch cache to TID@1 (clock 1 for new goroutine).
 	// CRITICAL: Clock must start at 1, not 0, to detect unsynchronized races.
@@ -140,6 +143,9 @@ func (rc *RaceContext) GetEpoch() epoch.Epoch {
 // After this, any operation in child "sees" all operations that happened
 // in parent before the fork (go func() statement).
 //
+// Pooling: Uses pooled VectorClock allocation to reduce GC pressure.
+// VectorClock is released back to pool when goroutine ends (racegoend).
+//
 // Parameters:
 //   - tid: Thread ID allocated for this child goroutine
 //   - parentClock: Snapshot of parent's VectorClock at fork time
@@ -158,7 +164,7 @@ func (rc *RaceContext) GetEpoch() epoch.Epoch {
 func AllocWithParentClock(tid uint16, parentClock *vectorclock.VectorClock) *RaceContext {
 	ctx := &RaceContext{
 		TID: tid,
-		C:   vectorclock.New(),
+		C:   vectorclock.NewFromPool(),
 	}
 
 	// Step 1: Inherit parent's clock (HB edge: parent fork -> child start).

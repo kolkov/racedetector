@@ -459,3 +459,214 @@ func BenchmarkVectorClockGetSet(b *testing.B) {
 		}
 	})
 }
+
+// ========== POOLING TESTS ==========
+
+// TestVectorClockPooling tests sync.Pool lifecycle.
+func TestVectorClockPooling(t *testing.T) {
+	t.Run("NewFromPool returns clean VectorClock", func(t *testing.T) {
+		vc := NewFromPool()
+		defer vc.Release()
+
+		// Verify all clocks are zero.
+		for i := 0; i < 10; i++ {
+			if vc.Get(uint16(i)) != 0 {
+				t.Errorf("NewFromPool() Get(%d) = %d, want 0", i, vc.Get(uint16(i)))
+			}
+		}
+
+		// Verify maxTID is 0.
+		if vc.GetMaxTID() != 0 {
+			t.Errorf("NewFromPool() GetMaxTID() = %d, want 0", vc.GetMaxTID())
+		}
+	})
+
+	t.Run("Release returns to pool and reuses", func(t *testing.T) {
+		// Get first VC from pool, set some values.
+		vc1 := NewFromPool()
+		vc1.Set(0, 100)
+		vc1.Set(5, 200)
+		vc1.Set(100, 300)
+
+		// Release back to pool.
+		vc1.Release()
+
+		// Get second VC from pool - should be the same object but reset.
+		vc2 := NewFromPool()
+		defer vc2.Release()
+
+		// Verify it's clean (Reset was called).
+		if vc2.Get(0) != 0 {
+			t.Errorf("Reused VC Get(0) = %d, want 0 (should be reset)", vc2.Get(0))
+		}
+		if vc2.Get(5) != 0 {
+			t.Errorf("Reused VC Get(5) = %d, want 0 (should be reset)", vc2.Get(5))
+		}
+		if vc2.GetMaxTID() != 0 {
+			t.Errorf("Reused VC GetMaxTID() = %d, want 0 (should be reset)", vc2.GetMaxTID())
+		}
+	})
+
+	t.Run("Release on nil is safe", func(_ *testing.T) {
+		var vc *VectorClock
+		// Should not panic.
+		vc.Release()
+	})
+
+	t.Run("Multiple Release is safe", func(_ *testing.T) {
+		vc := NewFromPool()
+		vc.Release()
+		vc.Release() // Second release should be safe (no-op).
+	})
+}
+
+// TestVectorClockReset tests Reset method.
+//
+//nolint:gocognit // Test function with multiple sub-tests
+func TestVectorClockReset(t *testing.T) {
+	t.Run("Reset clears all values", func(t *testing.T) {
+		vc := New()
+		vc.Set(0, 10)
+		vc.Set(5, 20)
+		vc.Set(100, 30)
+		vc.Set(65535, 40)
+
+		vc.Reset()
+
+		// Verify all values are zero.
+		if vc.Get(0) != 0 {
+			t.Errorf("After Reset, Get(0) = %d, want 0", vc.Get(0))
+		}
+		if vc.Get(5) != 0 {
+			t.Errorf("After Reset, Get(5) = %d, want 0", vc.Get(5))
+		}
+		if vc.Get(100) != 0 {
+			t.Errorf("After Reset, Get(100) = %d, want 0", vc.Get(100))
+		}
+		if vc.Get(65535) != 0 {
+			t.Errorf("After Reset, Get(65535) = %d, want 0", vc.Get(65535))
+		}
+
+		// Verify maxTID is reset to 0.
+		if vc.GetMaxTID() != 0 {
+			t.Errorf("After Reset, GetMaxTID() = %d, want 0", vc.GetMaxTID())
+		}
+	})
+
+	t.Run("Reset is sparse-aware", func(t *testing.T) {
+		vc := New()
+		// Set only first 10 elements.
+		for i := uint16(0); i < 10; i++ {
+			vc.Set(i, uint32(i*10))
+		}
+
+		// maxTID should be 9.
+		if vc.GetMaxTID() != 9 {
+			t.Errorf("Before Reset, GetMaxTID() = %d, want 9", vc.GetMaxTID())
+		}
+
+		vc.Reset()
+
+		// After reset, maxTID should be 0.
+		if vc.GetMaxTID() != 0 {
+			t.Errorf("After Reset, GetMaxTID() = %d, want 0", vc.GetMaxTID())
+		}
+
+		// All values should be 0.
+		for i := uint16(0); i < 10; i++ {
+			if vc.Get(i) != 0 {
+				t.Errorf("After Reset, Get(%d) = %d, want 0", i, vc.Get(i))
+			}
+		}
+	})
+}
+
+// ========== POOLING BENCHMARKS ==========
+
+// BenchmarkVectorClockPooling benchmarks pool vs direct allocation.
+func BenchmarkVectorClockPooling(b *testing.B) {
+	b.Run("New", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			vc := New()
+			vc.Set(0, 1)
+			_ = vc.Get(0)
+		}
+	})
+
+	b.Run("NewFromPool", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			vc := NewFromPool()
+			vc.Set(0, 1)
+			_ = vc.Get(0)
+			vc.Release()
+		}
+	})
+
+	b.Run("NewFromPool_NoRelease", func(b *testing.B) {
+		// Simulate leak - no Release().
+		// This should be same as New() performance-wise.
+		for i := 0; i < b.N; i++ {
+			vc := NewFromPool()
+			vc.Set(0, 1)
+			_ = vc.Get(0)
+			// Intentionally not calling Release().
+		}
+	})
+}
+
+// BenchmarkVectorClockReset benchmarks Reset operation.
+// Target: < 100ns for typical sparse clocks.
+//
+//nolint:gocognit // Benchmark function with multiple sub-benchmarks
+func BenchmarkVectorClockReset(b *testing.B) {
+	b.Run("Reset_Sparse10", func(b *testing.B) {
+		vc := New()
+		// Set 10 elements (typical case).
+		for i := uint16(0); i < 10; i++ {
+			vc.Set(i, uint32(i*10))
+		}
+
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			vc.Reset()
+			// Re-set for next iteration.
+			for j := uint16(0); j < 10; j++ {
+				vc.Set(j, uint32(j*10))
+			}
+		}
+	})
+
+	b.Run("Reset_Sparse100", func(b *testing.B) {
+		vc := New()
+		// Set 100 elements.
+		for i := uint16(0); i < 100; i++ {
+			vc.Set(i, uint32(i*10))
+		}
+
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			vc.Reset()
+			// Re-set for next iteration.
+			for j := uint16(0); j < 100; j++ {
+				vc.Set(j, uint32(j*10))
+			}
+		}
+	})
+
+	b.Run("Reset_Dense", func(b *testing.B) {
+		vc := New()
+		// Set all 65536 elements (worst case).
+		for i := uint16(0); i < 65535; i++ {
+			vc.Set(i, uint32(i))
+		}
+
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			vc.Reset()
+			// Re-set for next iteration.
+			for j := uint16(0); j < 65535; j++ {
+				vc.Set(j, uint32(j))
+			}
+		}
+	})
+}

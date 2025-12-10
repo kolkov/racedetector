@@ -64,17 +64,17 @@ func BenchmarkOnWrite_SameEpoch(b *testing.B) {
 
 	// Get shadow cell and manually set it to current epoch.
 	vs := d.shadowMemory.Get(addr)
-	vs.W = ctx.GetEpoch()
+	vs.SetW(ctx.GetEpoch())
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
 		// This should hit the same-epoch fast path every time.
-		// Note: We need to manually maintain vs.W == currentEpoch
+		// Note: We need to manually maintain vs.GetW() == currentEpoch
 		// because IncrementClock advances the epoch.
 		currentEpoch := ctx.GetEpoch()
-		vs.W = currentEpoch
+		vs.SetW(currentEpoch)
 		d.OnWrite(addr, ctx)
 	}
 }
@@ -96,7 +96,7 @@ func BenchmarkOnWrite_WithRace(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		// Set previous write to future epoch to trigger race.
-		vs.W = epoch.NewEpoch(1, 1000000)
+		vs.SetW(epoch.NewEpoch(1, 1000000))
 		ctx.C.Set(1, uint32(i))
 		ctx.Epoch = epoch.NewEpoch(1, uint64(i))
 
@@ -343,7 +343,7 @@ func BenchmarkOnRead_WithRace(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		// Set previous write to future epoch to trigger race.
-		vs.W = epoch.NewEpoch(1, 1000000)
+		vs.SetW(epoch.NewEpoch(1, 1000000))
 		ctx.C.Set(1, uint32(i))
 		ctx.Epoch = epoch.NewEpoch(1, uint64(i))
 

@@ -313,7 +313,7 @@ func TestVarState_HappensBeforeReads_NoPromotion(t *testing.T) {
 // v0.3.0: Updated for Enhanced Read-Shared format "R:[epochs...]".
 func TestVarState_String_PromotedFormat(t *testing.T) {
 	vs := NewVarState()
-	vs.W = epoch.NewEpoch(5, 100)
+	vs.SetW(epoch.NewEpoch(5, 100))
 
 	// Unpromoted (single reader in brackets).
 	vs.SetReadEpoch(epoch.NewEpoch(3, 50))
@@ -458,7 +458,7 @@ func TestVarState_Reset_ClearsPromotion(t *testing.T) {
 	if vs.GetReadEpoch() != 0 {
 		t.Error("Reset() should clear ReadEpoch")
 	}
-	if vs.W != 0 {
+	if vs.GetW() != 0 {
 		t.Error("Reset() should clear W")
 	}
 

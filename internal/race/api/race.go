@@ -303,6 +303,12 @@ func racegoend() {
 	if val, ok := contexts.LoadAndDelete(gid); ok {
 		ctx := val.(*goroutine.RaceContext)
 
+		// Return VectorClock to pool for reuse.
+		if ctx.C != nil {
+			ctx.C.Release()
+			ctx.C = nil
+		}
+
 		// Return TID to pool for reuse.
 		freeTID(ctx.TID)
 

@@ -7,6 +7,7 @@ package shadowmem
 
 import (
 	"sync"
+	"sync/atomic"
 
 	"github.com/kolkov/racedetector/internal/race/epoch"
 	"github.com/kolkov/racedetector/internal/race/vectorclock"
@@ -50,12 +51,13 @@ const (
 //   - exclusiveWriter == -1: Shared/multiple writers (full FastTrack)
 //   - exclusiveWriter == 0: Uninitialized (no writes yet)
 //
-// Memory layout (v0.3.0 Enhanced Read-Shared updated):
-//   - Base: 8 bytes (W) + 8 bytes (mu) + 32 bytes (readEpochs[4]) + 1 byte (readerCount) + 8 bytes (readClock ptr) = 57 bytes
-//   - SmartTrack: + 8 bytes (exclusiveWriter) + 4 bytes (writeCount) = 69 bytes
+// Memory layout (v0.3.0 Enhanced Read-Shared + Lock-Free):
+//   - Base: 8 bytes (W atomic) + 8 bytes (mu) + 32 bytes (readEpochs[4]) + 1 byte (readerCount) + 8 bytes (readClock ptr) = 57 bytes
+//   - SmartTrack: + 8 bytes (exclusiveWriter atomic) + 4 bytes (writeCount) = 69 bytes
 //   - Stack Traces (Task 6): + 8 bytes (writeStackHash) + 8 bytes (readStackHash) = 85 bytes
-//   - Total fast path: ~88 bytes per variable (with padding)
-//   - Promoted path: 88 bytes + 1024 bytes (VectorClock allocation) = 1112 bytes
+//   - Lazy PC capture: + 8 bytes (writePC atomic) + 8 bytes (readPC atomic) = 101 bytes
+//   - Total fast path: ~104 bytes per variable (with padding)
+//   - Promoted path: 104 bytes + 1024 bytes (VectorClock allocation) = 1128 bytes
 //
 // v0.3.0 ENHANCED READ-SHARED OPTIMIZATION (P1):
 // Trade-off: 88 bytes per variable (was 56 bytes) BUT avoids 1KB VectorClock allocation
@@ -68,8 +70,16 @@ const (
 //   - New approach: 5+ readers → 88 + 1024 = 1112 bytes
 //   - Net savings for 2-4 readers: 992 bytes per variable!
 type VarState struct {
-	W  epoch.Epoch // Last write epoch (always present).
-	mu sync.Mutex  // Protects read fields, readClock, and ownership fields from concurrent access.
+	// Lock-free hot-path fields (atomic operations, no mutex needed):
+	// These fields are accessed on EVERY memory access, so lock-free is critical.
+	W               atomic.Uint64  // Last write epoch (always present). Stores epoch.Epoch as uint64.
+	exclusiveWriter atomic.Int64   // TID of sole writer, -1 if shared, 0 if uninitialized.
+	writePC         atomic.Uintptr // PC (program counter) of last write caller (8 bytes).
+	readPC          atomic.Uintptr // PC (program counter) of last read caller (8 bytes).
+
+	// Mutex-protected fields (complex operations):
+	// These are accessed less frequently or require complex multi-field updates.
+	mu sync.Mutex // Protects read fields, readClock, and write counters from concurrent access.
 
 	// Read tracking (ENHANCED ADAPTIVE - v0.3.0 P1):
 	// Inline slots for up to 4 concurrent readers before VectorClock promotion.
@@ -87,8 +97,7 @@ type VarState struct {
 
 	// SmartTrack ownership tracking (v0.2.0 Task 3):
 	// Tracks exclusive writer to skip expensive happens-before checks.
-	exclusiveWriter int64  // TID of sole writer, -1 if shared, 0 if uninitialized.
-	writeCount      uint32 // Number of writes (for statistics and debugging).
+	writeCount uint32 // Number of writes (for statistics and debugging).
 
 	// Stack Trace Storage (v0.2.0 Task 6):
 	// Hash references to stack depot for previous write/read.
@@ -111,26 +120,37 @@ func NewVarState() *VarState {
 //
 // This is used when a memory location is freed and reused.
 // After Reset(), the state represents a fresh, never-accessed variable.
-// If promoted, this demotes back to fast path (frees VectorClock).
+// If promoted, this demotes back to fast path (releases VectorClock to pool).
 //
 // SmartTrack (v0.2.0 Task 3): Also resets ownership tracking fields.
 // Stack Traces (v0.2.0 Task 6): Also clears stack hashes.
 // Enhanced Read-Shared (v0.3.0 P1): Also clears all inline reader slots.
+// Lazy Stack Capture (v0.3.0 Performance): Also clears PC fields.
+// Pooling: Returns VectorClock to pool for reuse if promoted.
 //
 // Performance: This operation must be zero-allocation and inline-friendly.
 // Target: <5ns/op (was <2ns, increased due to clearing 4 slots).
 //
 // Note: Removed //go:nosplit because sync.Mutex.Lock() requires stack space.
 func (vs *VarState) Reset() {
-	vs.W = 0
+	// Reset lock-free fields using atomic stores.
+	vs.W.Store(0)
+	vs.exclusiveWriter.Store(0)
+	vs.writePC.Store(0)
+	vs.readPC.Store(0)
+
+	// Reset mutex-protected fields.
 	vs.mu.Lock()
+	// Release VectorClock back to pool if promoted.
+	if vs.readClock != nil {
+		vs.readClock.Release()
+	}
 	// Clear all inline reader slots.
 	for i := range vs.readEpochs {
 		vs.readEpochs[i] = 0
 	}
 	vs.readerCount = 0
 	vs.readClock = nil // Demote if promoted.
-	vs.exclusiveWriter = 0
 	vs.writeCount = 0
 	vs.writeStackHash = 0
 	vs.readStackHash = 0
@@ -161,7 +181,7 @@ func (vs *VarState) IsPromoted() bool {
 //   - A 5th concurrent reader is detected
 //
 // Steps:
-//  1. Allocate VectorClock (one-time cost, 1KB)
+//  1. Allocate VectorClock from pool (one-time cost, reused allocation)
 //  2. Copy ALL inline reader epochs into VectorClock
 //  3. Merge new read VectorClock
 //  4. Set readerCount = promotedMarker (marks as promoted)
@@ -170,6 +190,7 @@ func (vs *VarState) IsPromoted() bool {
 //
 // Performance: This is a one-time cost (~100ns allocation + copy).
 // Now even rarer than before (only 5+ concurrent readers trigger this).
+// Uses pooled allocation to reduce GC pressure.
 //
 // Parameters:
 //   - newReadVC: The VectorClock of the new concurrent reader
@@ -177,8 +198,8 @@ func (vs *VarState) PromoteToReadClock(newReadVC *vectorclock.VectorClock) {
 	vs.mu.Lock()
 	defer vs.mu.Unlock()
 
-	// Allocate VectorClock for promoted read tracking.
-	vs.readClock = vectorclock.New()
+	// Allocate VectorClock from pool for promoted read tracking.
+	vs.readClock = vectorclock.NewFromPool()
 
 	// Copy ALL inline reader epochs into VectorClock.
 	for i := uint8(0); i < vs.readerCount && i < maxInlineReaders; i++ {
@@ -362,9 +383,15 @@ func (vs *VarState) GetReadClock() *vectorclock.VectorClock {
 //
 // This is a key optimization: variables with alternating read/write stay in fast path.
 //
+// Pooling: Returns VectorClock to pool for reuse if promoted.
+//
 // Note: Removed //go:nosplit because sync.Mutex.Lock() requires stack space.
 func (vs *VarState) Demote() {
 	vs.mu.Lock()
+	// Release VectorClock back to pool if promoted.
+	if vs.readClock != nil {
+		vs.readClock.Release()
+	}
 	// Clear all inline reader slots.
 	for i := range vs.readEpochs {
 		vs.readEpochs[i] = 0
@@ -372,6 +399,57 @@ func (vs *VarState) Demote() {
 	vs.readerCount = 0
 	vs.readClock = nil
 	vs.mu.Unlock()
+}
+
+// === Lock-Free Accessor Methods (v0.3.0 Lock-Free Optimization) ===
+
+// GetW returns the last write epoch using atomic load (lock-free).
+//
+// This is the HOT PATH method for checking write epochs during race detection.
+// Using atomic load instead of mutex reduces overhead from ~20-50ns to ~2-5ns.
+//
+// Thread Safety: Lock-free (atomic load).
+// Performance: ~2-5ns (atomic load).
+//
+//go:nosplit
+func (vs *VarState) GetW() epoch.Epoch {
+	return epoch.Epoch(vs.W.Load())
+}
+
+// SetW sets the last write epoch using atomic store (lock-free).
+//
+// This is the HOT PATH method for updating write epochs during race detection.
+// Using atomic store instead of mutex reduces overhead from ~20-50ns to ~2-5ns.
+//
+// Parameters:
+//   - e: The epoch to store
+//
+// Thread Safety: Lock-free (atomic store).
+// Performance: ~2-5ns (atomic store).
+//
+//go:nosplit
+func (vs *VarState) SetW(e epoch.Epoch) {
+	vs.W.Store(uint64(e))
+}
+
+// CompareAndSwapW atomically compares and swaps the write epoch (lock-free).
+//
+// This is used for atomic write epoch updates when racing with other writers.
+//
+// Parameters:
+//   - oldVal: Expected current value
+//   - newVal: New value to set
+//
+// Returns:
+//   - true if swap succeeded (current value was 'oldVal')
+//   - false if swap failed (current value was not 'oldVal')
+//
+// Thread Safety: Lock-free (atomic CAS).
+// Performance: ~5-10ns (atomic CAS).
+//
+//go:nosplit
+func (vs *VarState) CompareAndSwapW(oldVal, newVal epoch.Epoch) bool {
+	return vs.W.CompareAndSwap(uint64(oldVal), uint64(newVal))
 }
 
 // === SmartTrack Ownership Tracking Methods (v0.2.0 Task 3) ===
@@ -385,15 +463,12 @@ func (vs *VarState) Demote() {
 //
 // This is used by the detector to decide whether to skip happens-before checks.
 //
-// Thread Safety: Protected by mutex.
-// Performance: <5ns/op (mutex + field read).
+// Thread Safety: Lock-free (atomic load).
+// Performance: ~2-5ns (atomic load).
 //
-// Note: Removed //go:nosplit because sync.Mutex.Lock() requires stack space.
+//go:nosplit
 func (vs *VarState) IsOwned() bool {
-	vs.mu.Lock()
-	owned := vs.exclusiveWriter >= 0
-	vs.mu.Unlock()
-	return owned
+	return vs.exclusiveWriter.Load() >= 0
 }
 
 // GetExclusiveWriter returns the TID of the exclusive writer, or -1 if shared.
@@ -403,15 +478,12 @@ func (vs *VarState) IsOwned() bool {
 //   - -1: Shared/multiple writers
 //   - 0: Uninitialized (no writes yet)
 //
-// Thread Safety: Protected by mutex.
-// Performance: <5ns/op (mutex + field read).
+// Thread Safety: Lock-free (atomic load).
+// Performance: ~2-5ns (atomic load).
 //
-// Note: Removed //go:nosplit because sync.Mutex.Lock() requires stack space.
+//go:nosplit
 func (vs *VarState) GetExclusiveWriter() int64 {
-	vs.mu.Lock()
-	writer := vs.exclusiveWriter
-	vs.mu.Unlock()
-	return writer
+	return vs.exclusiveWriter.Load()
 }
 
 // SetExclusiveWriter sets the exclusive writer TID.
@@ -420,14 +492,12 @@ func (vs *VarState) GetExclusiveWriter() int64 {
 //   - First write: Claim ownership (tid >= 0)
 //   - Second writer detected: Promote to shared (tid = -1)
 //
-// Thread Safety: Protected by mutex.
-// Performance: <5ns/op (mutex + field write).
+// Thread Safety: Lock-free (atomic store).
+// Performance: ~2-5ns (atomic store).
 //
-// Note: Removed //go:nosplit because sync.Mutex.Lock() requires stack space.
+//go:nosplit
 func (vs *VarState) SetExclusiveWriter(tid int64) {
-	vs.mu.Lock()
-	vs.exclusiveWriter = tid
-	vs.mu.Unlock()
+	vs.exclusiveWriter.Store(tid)
 }
 
 // CompareAndSwapExclusiveWriter atomically compares and swaps the exclusive writer.
@@ -444,17 +514,12 @@ func (vs *VarState) SetExclusiveWriter(tid int64) {
 //   - true if swap succeeded (current value was 'oldVal')
 //   - false if swap failed (current value was not 'oldVal')
 //
-// Thread Safety: Protected by mutex, atomic semantics.
-// Performance: <10ns/op (mutex + compare + conditional write).
+// Thread Safety: Lock-free (atomic CAS).
+// Performance: ~5-10ns (atomic CAS).
+//
+//go:nosplit
 func (vs *VarState) CompareAndSwapExclusiveWriter(oldVal, newVal int64) bool {
-	vs.mu.Lock()
-	if vs.exclusiveWriter == oldVal {
-		vs.exclusiveWriter = newVal
-		vs.mu.Unlock()
-		return true
-	}
-	vs.mu.Unlock()
-	return false
+	return vs.exclusiveWriter.CompareAndSwap(oldVal, newVal)
 }
 
 // IncrementWriteCount increments the write counter.
@@ -503,7 +568,7 @@ func (vs *VarState) GetWriteCount() uint32 {
 // This method is only used for debugging and race reporting, not on hot path.
 func (vs *VarState) String() string {
 	// Note: We manually build the string to avoid fmt import overhead.
-	wStr := "W:" + vs.W.String()
+	wStr := "W:" + vs.GetW().String()
 
 	vs.mu.Lock()
 	defer vs.mu.Unlock()
@@ -600,4 +665,69 @@ func (vs *VarState) GetReadStack() uint64 {
 	hash := vs.readStackHash
 	vs.mu.Unlock()
 	return hash
+}
+
+// === Lazy Stack Capture Methods (v0.3.0 Performance) ===
+
+// SetWritePC stores the program counter (PC) of the write caller.
+//
+// This is the HOT PATH optimization: instead of capturing full stack (~500ns),
+// we store only the caller PC (~5ns). Full stack is captured lazily when race detected.
+//
+// Parameters:
+//   - pc: Program counter from runtime.Callers(2, pcs[:1])
+//
+// Thread Safety: Lock-free (atomic store).
+// Performance: ~2-5ns (atomic store).
+//
+//go:nosplit
+func (vs *VarState) SetWritePC(pc uintptr) {
+	vs.writePC.Store(pc)
+}
+
+// GetWritePC retrieves the program counter of the last write.
+//
+// This is called during race reporting to capture full stack lazily.
+//
+// Returns:
+//   - uintptr: Program counter of last write caller
+//   - 0: If no write PC has been captured
+//
+// Thread Safety: Lock-free (atomic load).
+// Performance: ~2-5ns (atomic load).
+//
+//go:nosplit
+func (vs *VarState) GetWritePC() uintptr {
+	return vs.writePC.Load()
+}
+
+// SetReadPC stores the program counter (PC) of the read caller.
+//
+// This is the HOT PATH optimization for reads on read-shared variables.
+//
+// Parameters:
+//   - pc: Program counter from runtime.Callers(2, pcs[:1])
+//
+// Thread Safety: Lock-free (atomic store).
+// Performance: ~2-5ns (atomic store).
+//
+//go:nosplit
+func (vs *VarState) SetReadPC(pc uintptr) {
+	vs.readPC.Store(pc)
+}
+
+// GetReadPC retrieves the program counter of the last read.
+//
+// This is called during race reporting to capture full stack lazily.
+//
+// Returns:
+//   - uintptr: Program counter of last read caller
+//   - 0: If no read PC has been captured
+//
+// Thread Safety: Lock-free (atomic load).
+// Performance: ~2-5ns (atomic load).
+//
+//go:nosplit
+func (vs *VarState) GetReadPC() uintptr {
+	return vs.readPC.Load()
 }

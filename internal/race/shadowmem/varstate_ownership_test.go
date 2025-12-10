@@ -87,7 +87,7 @@ func TestVarState_Reset_ClearsOwnership(t *testing.T) {
 	vs.SetExclusiveWriter(5)
 	vs.IncrementWriteCount()
 	vs.IncrementWriteCount()
-	vs.W = epoch.NewEpoch(5, 100)
+	vs.SetW(epoch.NewEpoch(5, 100))
 
 	// Reset
 	vs.Reset()
@@ -101,8 +101,8 @@ func TestVarState_Reset_ClearsOwnership(t *testing.T) {
 		t.Errorf("Expected writeCount = 0 after Reset(), got %d", vs.GetWriteCount())
 	}
 
-	if vs.W != 0 {
-		t.Errorf("Expected W = 0 after Reset(), got %v", vs.W)
+	if vs.GetW() != 0 {
+		t.Errorf("Expected W = 0 after Reset(), got %v", vs.GetW())
 	}
 }
 

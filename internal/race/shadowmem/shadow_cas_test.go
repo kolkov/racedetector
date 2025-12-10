@@ -42,7 +42,7 @@ func TestCASBasedShadow_Store_New(t *testing.T) {
 	addr := uintptr(0x5678)
 
 	vs := NewVarState()
-	vs.W = epoch.NewEpoch(5, 100)
+	vs.SetW(epoch.NewEpoch(5, 100))
 
 	storedVS := shadow.Store(addr, vs)
 
@@ -56,8 +56,8 @@ func TestCASBasedShadow_Store_New(t *testing.T) {
 		t.Errorf("Load() returned different VarState after Store(): %p vs %p", loadedVS, vs)
 	}
 
-	if loadedVS.W != epoch.NewEpoch(5, 100) {
-		t.Errorf("VarState.W = %v, want %v", loadedVS.W, epoch.NewEpoch(5, 100))
+	if loadedVS.GetW() != epoch.NewEpoch(5, 100) {
+		t.Errorf("VarState.W = %v, want %v", loadedVS.GetW(), epoch.NewEpoch(5, 100))
 	}
 
 	t.Logf("Store(0x%x) and Load() work correctly", addr)
@@ -79,8 +79,8 @@ func TestCASBasedShadow_LoadOrStore_Miss(t *testing.T) {
 	}
 
 	// New VarState should be zero-initialized.
-	if vs.W != 0 {
-		t.Errorf("New VarState.W = %v, want 0", vs.W)
+	if vs.GetW() != 0 {
+		t.Errorf("New VarState.W = %v, want 0", vs.GetW())
 	}
 
 	t.Logf("LoadOrStore(0x%x) created new cell: %s", addr, vs)
@@ -93,7 +93,7 @@ func TestCASBasedShadow_LoadOrStore_Hit(t *testing.T) {
 
 	// First call creates the cell.
 	vs1, created1 := shadow.LoadOrStore(addr)
-	vs1.W = epoch.NewEpoch(7, 200)
+	vs1.SetW(epoch.NewEpoch(7, 200))
 
 	if !created1 {
 		t.Error("First LoadOrStore() should return created=true")
@@ -110,8 +110,8 @@ func TestCASBasedShadow_LoadOrStore_Hit(t *testing.T) {
 		t.Errorf("LoadOrStore() returned different instance: %p vs %p", vs2, vs1)
 	}
 
-	if vs2.W != epoch.NewEpoch(7, 200) {
-		t.Errorf("VarState.W = %v, want %v", vs2.W, epoch.NewEpoch(7, 200))
+	if vs2.GetW() != epoch.NewEpoch(7, 200) {
+		t.Errorf("VarState.W = %v, want %v", vs2.GetW(), epoch.NewEpoch(7, 200))
 	}
 
 	t.Logf("LoadOrStore(0x%x) returned existing cell: %s", addr, vs2)
@@ -130,7 +130,7 @@ func TestCASBasedShadow_MultipleAddresses(t *testing.T) {
 		if !created {
 			t.Errorf("LoadOrStore(0x%x) should create new cell", addr)
 		}
-		vs.W = epoch.NewEpoch(uint16(i+1), uint64((i+1)*100))
+		vs.SetW(epoch.NewEpoch(uint16(i+1), uint64((i+1)*100)))
 		cells[i] = vs
 	}
 
@@ -147,8 +147,8 @@ func TestCASBasedShadow_MultipleAddresses(t *testing.T) {
 		}
 
 		expectedW := epoch.NewEpoch(uint16(i+1), uint64((i+1)*100))
-		if vs.W != expectedW {
-			t.Errorf("VarState[0x%x].W = %v, want %v", addr, vs.W, expectedW)
+		if vs.GetW() != expectedW {
+			t.Errorf("VarState[0x%x].W = %v, want %v", addr, vs.GetW(), expectedW)
 		}
 	}
 
@@ -163,7 +163,7 @@ func TestCASBasedShadow_Reset(t *testing.T) {
 	addresses := []uintptr{0x1111, 0x2222, 0x3333, 0x4444}
 	for _, addr := range addresses {
 		vs, _ := shadow.LoadOrStore(addr)
-		vs.W = epoch.NewEpoch(1, 10)
+		vs.SetW(epoch.NewEpoch(1, 10))
 	}
 
 	// Verify cells exist before reset.
@@ -285,7 +285,7 @@ func TestCASBasedShadow_Collisions(t *testing.T) {
 		if !created {
 			t.Errorf("LoadOrStore(0x%x) should create new cell", addr)
 		}
-		vs.W = epoch.NewEpoch(1, uint64(i))
+		vs.SetW(epoch.NewEpoch(1, uint64(i)))
 	}
 
 	// Verify all addresses can be retrieved correctly.
@@ -297,8 +297,8 @@ func TestCASBasedShadow_Collisions(t *testing.T) {
 		}
 
 		expectedW := epoch.NewEpoch(1, uint64(i))
-		if vs.W != expectedW {
-			t.Errorf("VarState[0x%x].W = %v, want %v (collision handling failed)", addr, vs.W, expectedW)
+		if vs.GetW() != expectedW {
+			t.Errorf("VarState[0x%x].W = %v, want %v (collision handling failed)", addr, vs.GetW(), expectedW)
 		}
 	}
 
@@ -378,7 +378,7 @@ func TestCASBasedShadow_Concurrent_MultipleAddresses(t *testing.T) {
 				vs, _ := shadow.LoadOrStore(addr)
 
 				// Update the cell.
-				vs.W = epoch.NewEpoch(uint16(gid), uint64(j))
+				vs.SetW(epoch.NewEpoch(uint16(gid), uint64(j)))
 			}
 		}(i)
 	}
@@ -525,7 +525,7 @@ func BenchmarkCASBasedShadow_Concurrent(b *testing.B) {
 		for pb.Next() {
 			addr := hotAddresses[i%len(hotAddresses)]
 			vs, _ := shadow.LoadOrStore(addr)
-			vs.W = epoch.NewEpoch(1, uint64(i))
+			vs.SetW(epoch.NewEpoch(1, uint64(i)))
 			i++
 		}
 	})
@@ -621,7 +621,7 @@ func TestCASBasedShadow_AddressCompression(t *testing.T) {
 	// Test that addresses within same 8-byte block share the same VarState.
 	baseAddr := uintptr(0x1000) // Aligned to 8 bytes.
 	vs1, _ := shadow.LoadOrStore(baseAddr)
-	vs1.W = epoch.NewEpoch(1, 100)
+	vs1.SetW(epoch.NewEpoch(1, 100))
 
 	// Addresses +1 to +7 should return the same VarState (same 8-byte block).
 	for offset := uintptr(1); offset < 8; offset++ {
@@ -659,7 +659,7 @@ func TestCASBasedShadow_AddressCompressionDisabled(t *testing.T) {
 	// With compression disabled, each address gets its own VarState.
 	baseAddr := uintptr(0x2000)
 	vs1, _ := shadow.LoadOrStore(baseAddr)
-	vs1.W = epoch.NewEpoch(1, 100)
+	vs1.SetW(epoch.NewEpoch(1, 100))
 
 	// Even +1 should get a different VarState.
 	vs2, created := shadow.LoadOrStore(baseAddr + 1)
