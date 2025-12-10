@@ -941,88 +941,9 @@ func parseAllGIDs(buf []byte) []int64 {
 	return gids
 }
 
-// getGoroutineID extracts the goroutine ID for the current goroutine.
-//
-// Phase 2 Optimized Implementation:
-//
-// On amd64: Uses assembly stub to read g.goid directly from TLS.
-//   - Performance: <1ns per call
-//   - Implementation: getGoroutineIDFast() in goid_amd64.go
-//
-// On other architectures: Uses runtime.Stack() parsing (fallback).
-//   - Performance: ~4.7µs per call
-//   - Implementation: getGoroutineIDFast() in goid_generic.go
-//
-// The fast path provides 4700x speedup on amd64 compared to MVP.
-//
-// Returns:
-//   - int64: Goroutine ID (unique per goroutine)
-func getGoroutineID() int64 {
-	// Dispatch to architecture-specific implementation.
-	// On amd64: assembly-optimized fast path (<1ns)
-	// On others: runtime.Stack parsing (~4.7µs)
-	return getGoroutineIDFast()
-}
-
-// parseGID extracts the goroutine ID from a runtime.Stack() output.
-//
-// Input format:
-//
-//	"goroutine 123 [running]:\n..."
-//
-// We extract "123" and parse it as int64.
-//
-// Algorithm:
-//  1. Find "goroutine " prefix (10 bytes)
-//  2. Scan forward to find the space after the number
-//  3. Parse the number between "goroutine " and " ["
-//
-// Parameters:
-//   - buf: Stack trace buffer from runtime.Stack()
-//
-// Returns:
-//   - int64: Goroutine ID, or 0 if parsing fails
-//
-// Performance: ~50ns (string parsing overhead).
-func parseGID(buf []byte) int64 {
-	// Find "goroutine " prefix.
-	// This should always be at the start of the buffer.
-	const prefix = "goroutine "
-	prefixLen := len(prefix)
-
-	// Verify buffer is long enough and starts with "goroutine ".
-	if len(buf) < prefixLen {
-		return 0
-	}
-	if string(buf[:prefixLen]) != prefix {
-		return 0
-	}
-
-	// Skip past "goroutine " to the start of the number.
-	buf = buf[prefixLen:]
-
-	// Find the end of the number (space before "[running]").
-	end := 0
-	//nolint:gosec // G602: Safe slice access, bounds checked with end < len(buf)
-	for end < len(buf) && buf[end] >= '0' && buf[end] <= '9' {
-		end++
-	}
-
-	// No digits found - return 0.
-	if end == 0 {
-		return 0
-	}
-
-	// Parse the number.
-	// strconv.ParseInt is the standard library parser, reasonably fast.
-	//nolint:gosec // G602: Safe slice bounds, end validated to be <= len(buf)
-	gid, err := strconv.ParseInt(string(buf[:end]), 10, 64)
-	if err != nil {
-		return 0
-	}
-
-	return gid
-}
+// NOTE: getGoroutineID() and parseGID() are defined in goid_generic.go
+// They use assembly-optimized path on amd64/arm64 (Go 1.23-1.25) via goid_fast.go
+// or fall back to runtime.Stack parsing via goid_fallback.go
 
 // getcallerpc returns the program counter (PC) of the caller.
 //

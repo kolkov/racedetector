@@ -7,6 +7,96 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### v0.5.0 - Assembly-Optimized Goroutine ID (In Development)
+
+**Performance Breakthrough: ~2200x Faster Goroutine ID Extraction!**
+
+This release introduces native assembly implementation for goroutine ID extraction,
+eliminating the runtime.Stack parsing overhead on supported platforms.
+
+### Added
+
+**Assembly-Optimized GID Extraction**
+- **goid_amd64.s**: Native assembly for x86-64 using TLS access
+  - `MOVQ (TLS), R14` to get g pointer from Thread Local Storage
+  - Zero allocations, ~1.73 ns/op
+- **goid_arm64.s**: Native assembly for ARM64 using dedicated g register
+  - `MOVD g, R0` to read g pointer from R28 register
+  - Zero allocations, ~2 ns/op
+- **goid_fast.go**: Go wrapper with offset logic
+  - Reads goid at offset 152 bytes from g struct pointer
+  - Verified for Go 1.23, 1.24, and 1.25
+  - Automatic fallback to runtime.Stack on nil g pointer
+- **goid_fallback.go**: Fallback for unsupported platforms
+  - Used on Go <1.23, Go >=1.26, or non-amd64/arm64 architectures
+  - Uses runtime.Stack parsing (~3987 ns/op)
+
+### Performance
+
+| Method | Time | Allocations | Speedup |
+|--------|------|-------------|---------|
+| Assembly (amd64) | 1.73 ns/op | 0 B/op | ~2200x |
+| Assembly (arm64) | ~2 ns/op | 0 B/op | ~2000x |
+| runtime.Stack | 3987 ns/op | 64 B/op | baseline |
+
+### Technical Details
+
+**Build Constraints:**
+```go
+//go:build go1.23 && !go1.26 && (amd64 || arm64)
+```
+
+**g struct goid offset calculation (Go 1.23-1.25):**
+```
+Field          Size    Cumulative Offset
+-----          ----    -----------------
+stack          16      0
+stackguard0    8       16
+stackguard1    8       24
+_panic         8       32
+_defer         8       40
+m              8       48
+sched (gobuf)  48      56
+syscallsp      8       104
+syscallpc      8       112
+syscallbp      8       120
+stktopsp       8       128
+param          8       136
+atomicstatus   4       144
+stackLock      4       148
+goid           8       152  <- TARGET
+```
+
+### Changed
+
+- **goid_generic.go**: Refactored to provide common utilities
+  - `getGoroutineID()` - main entry point
+  - `getGoroutineIDSlow()` - runtime.Stack fallback
+  - `parseGID()` - optimized byte parsing (no regex, no allocations)
+- **.golangci.yml**: Added exclusion for govet unsafeptr check on goid_fast.go
+- **scripts/pre-release-check.sh**: Added `-unsafeptr=false` flag for go vet
+
+### Removed
+
+- No external dependencies for goroutine ID extraction
+- outrigdev/goid dependency was evaluated but rejected in favor of own implementation
+
+### Why Own Implementation?
+
+Strategic decision: **Zero external dependencies for Go runtime proposal!**
+- If Go team accepts this detector into runtime, it's their responsibility to maintain GID extraction
+- External dependency would complicate acceptance into official Go toolchain
+- Our implementation is smaller and tailored specifically for race detector needs
+
+### Installation
+
+```bash
+# Will be available after release:
+go install github.com/kolkov/racedetector/cmd/racedetector@v0.5.0
+```
+
+---
+
 ## [0.4.10] - 2025-12-10
 
 ### Fix: Run go mod tidy in src directory

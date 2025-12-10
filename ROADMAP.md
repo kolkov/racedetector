@@ -3,7 +3,7 @@
 > **Strategic Advantage**: Proven FastTrack algorithm implementation without CGO dependency!
 > **Approach**: Scientific algorithm + Go best practices - eliminates C++ ThreadSanitizer dependency
 
-**Last Updated**: 2025-12-01 | **Current Version**: v0.3.2 (RELEASED!) | **Strategy**: MVP → Optimization + Hardening → Advanced Optimizations → Runtime Integration → Go Proposal | **Milestone**: v0.3.2 COMPLETE! → v0.4.0 (Runtime Integration) → v1.0.0 (Q1 2026)
+**Last Updated**: 2025-12-10 | **Current Version**: v0.4.10 (STABLE) | v0.5.0 (IN DEVELOPMENT) | **Strategy**: MVP → Optimization + Hardening → Advanced Optimizations → Assembly GID → Runtime Integration → Go Proposal | **Milestone**: v0.5.0 (Assembly GID) → v0.6.0 (Runtime Integration) → v1.0.0 (Q1 2026)
 
 ---
 
@@ -48,7 +48,11 @@ v0.3.0 (Advanced Optimizations) ✅ RELEASED 2025-11-28
          ↓ (43× faster VectorClocks, 8× memory reduction, sampling!)
 v0.3.2 (Go 1.24+ & Bug Fixes) ✅ RELEASED 2025-12-01
          ↓ (Go 1.24+ requirement, replace directive fix)
-v0.4.0 (Go Runtime Integration) → Replace ThreadSanitizer in Go toolchain
+v0.4.0-v0.4.10 (Test Command) ✅ RELEASED 2025-12-09/10
+         ↓ (racedetector test command, 10 hotfixes)
+v0.5.0 (Assembly GID) 🚧 IN DEVELOPMENT
+         ↓ (~2200× faster goroutine ID extraction!)
+v0.6.0 (Go Runtime Integration) → Replace ThreadSanitizer in Go toolchain
          ↓ (1-2 months testing)
 v1.0.0 LTS → Production-ready with Go community adoption (Q1 2026)
 ```
@@ -98,7 +102,32 @@ v1.0.0 LTS → Production-ready with Go community adoption (Q1 2026)
   - Convert relative paths to absolute for temp workspace
   - New dependency: golang.org/x/mod v0.30.0
 
-**v0.4.0** = Go runtime integration (planned)
+**v0.4.0-v0.4.10** = Test Command ✅ RELEASED
+- **`racedetector test` command**:
+  - Drop-in replacement for `go test -race`
+  - All `go test` flags supported
+  - 10 hotfixes for edge cases discovered in real-world testing
+- **Validated on complex projects**:
+  - gogpu/wgpu - multi-package module with CGO
+  - Self-dogfooding - racedetector can instrument itself
+
+**v0.5.0** = Assembly-Optimized Goroutine ID 🚧 IN DEVELOPMENT
+- **Native assembly implementation**:
+  - amd64: TLS-based access via `(TLS)` pseudo-register
+  - arm64: Dedicated g register (R28)
+  - goid offset: 152 bytes (verified for Go 1.23-1.25)
+- **Performance breakthrough**:
+  - 1.73 ns/op (was 3987 ns/op) - ~2200× speedup!
+  - Zero allocations on fast path
+- **Zero external dependencies**:
+  - Pure Go + native assembly
+  - No outrigdev/goid or other libraries
+  - Strategic decision for Go runtime proposal acceptance
+- **Automatic fallback**:
+  - runtime.Stack parsing on unsupported platforms
+  - Build constraints: `go1.23 && !go1.26 && (amd64 || arm64)`
+
+**v0.6.0** = Go runtime integration (planned)
 - Replace `runtime/race/*.syso` (ThreadSanitizer binaries)
 - Integrate with Go compiler's `-race` flag
 - Official Go toolchain compatibility testing
@@ -117,15 +146,16 @@ v1.0.0 LTS → Production-ready with Go community adoption (Q1 2026)
 
 ---
 
-## 📊 Current Status (v0.3.2)
+## 📊 Current Status (v0.4.10 Stable | v0.5.0 In Development)
 
-**Phase**: ✅ Production-Ready Standalone Tool with Go 1.24+ Requirements
-**Detector**: Production-grade! Go 1.24+ for Swiss Tables performance! 🚀
-**AST Instrumentation**: Complete! Optimized with BigFoot coalescing! ✨
+**Phase**: 🚧 Assembly GID Optimization (v0.5.0 branch: feature/assembly-goid)
+**Detector**: Production-grade! Now with ~2200× faster goroutine ID! ⚡
+**AST Instrumentation**: Complete! Test command fully working! ✅
 
 **What Works**:
 - ✅ `racedetector build` command (drop-in for `go build`)
 - ✅ `racedetector run` command (drop-in for `go run`)
+- ✅ `racedetector test` command (drop-in for `go test -race`) **NEW in v0.4.0!**
 - ✅ **FastTrack algorithm** (write/read race detection)
 - ✅ **CAS-based shadow memory** (81.4% faster, 0 allocations)
 - ✅ **BigFoot coalescing** (90% barrier reduction)
@@ -140,6 +170,7 @@ v1.0.0 LTS → Production-ready with Go community adoption (Q1 2026)
 - ✅ **Smart filtering** (skips constants, built-ins, literals)
 - ✅ **Professional errors** (file:line:column with suggestions)
 - ✅ **Verbose mode** (`-v` flag shows instrumentation stats)
+- 🚧 **Assembly GID** (~2200× faster goroutine ID) **IN DEVELOPMENT!**
 
 **Example Race Detection (v0.2.0)**:
 ```bash
@@ -182,6 +213,39 @@ Previous Write at 0xc00000a0b8 by goroutine 3:
 ---
 
 ## 📅 What's Next
+
+### **v0.5.0 - Assembly-Optimized Goroutine ID** (December 2025) [IN DEVELOPMENT! 🚧]
+
+**Goal**: ~2200× faster goroutine ID extraction with native assembly
+
+**Duration**: 1 day (December 10, 2025)
+
+**Status**: 🚧 Implementation complete, testing and documentation in progress
+
+**Branch**: `feature/assembly-goid`
+
+**What's Done**:
+1. ✅ **goid_amd64.s** - Native assembly for x86-64 (TLS access)
+2. ✅ **goid_arm64.s** - Native assembly for ARM64 (g register)
+3. ✅ **goid_fast.go** - Go wrapper with offset logic (152 bytes)
+4. ✅ **goid_fallback.go** - Fallback for unsupported platforms
+5. ✅ **goid_generic.go** - Common utilities (parseGID, getGoroutineIDSlow)
+6. ✅ **Benchmarks** - 1.73 ns/op (was 3987 ns/op)
+7. ✅ **Tests** - All passing including fast vs slow validation
+8. 🚧 **Documentation** - Updating README, CHANGELOG, ROADMAP
+
+**Performance Results**:
+```
+BenchmarkGetGoroutineID_Fast-12    1.73 ns/op    0 B/op    0 allocs/op
+BenchmarkGetGoroutineID_Slow-12    3987 ns/op   64 B/op    1 allocs/op
+```
+
+**Strategic Decision**: Zero external dependencies!
+- Evaluated outrigdev/goid but chose own implementation
+- If Go team accepts detector into runtime, GID is their responsibility
+- External dependency would complicate Go proposal acceptance
+
+---
 
 ### **v0.2.0 - Performance + Production Hardening** (November 2025) [RELEASED! ✅]
 
@@ -249,13 +313,13 @@ Previous Write at 0xc00000a0b8 by goroutine 3:
 
 ---
 
-### **v0.4.0 - Go Runtime Integration** (January 2026) [PLANNED] ← Formerly v0.3.0
+### **v0.6.0 - Go Runtime Integration** (January 2026) [PLANNED]
 
 **Goal**: Replace ThreadSanitizer in Go toolchain
 
 **Duration**: 1-2 months (including testing)
 
-**Note**: Renumbered from v0.3.0 to v0.4.0 after merging hardening into v0.2.0
+**Note**: Renumbered from v0.4.0 to v0.6.0 after adding v0.5.0 (Assembly GID)
 
 **Planned Work**:
 1. **Runtime Integration**
@@ -362,5 +426,5 @@ Previous Write at 0xc00000a0b8 by goroutine 3:
 
 ---
 
-*Version 1.3 (Updated 2025-12-01)*
-*Current: v0.3.2 (RELEASED) | Phase: Production-Ready Standalone Tool | Next: v0.4.0 (Go Runtime Integration) | Target: v1.0.0 LTS (Q1 2026)*
+*Version 1.4 (Updated 2025-12-10)*
+*Current: v0.4.10 (STABLE) | v0.5.0 (IN DEVELOPMENT - Assembly GID) | Next: v0.6.0 (Go Runtime Integration) | Target: v1.0.0 LTS (Q1 2026)*

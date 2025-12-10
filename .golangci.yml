@@ -199,6 +199,15 @@ linters:
         linters:
           - revive       # Package name 'api' triggers var-naming rule
 
+      # goid_fast.go - intentional unsafe pointer arithmetic for runtime.g access
+      # This is a well-known pattern used by many goid libraries (petermattis/goid, etc.)
+      # The uintptr→unsafe.Pointer conversion is safe because:
+      #   - g struct is pinned in memory (never moved by GC)
+      #   - We only read the goid field, never write
+      - path: internal/race/api/goid_fast\.go
+        linters:
+          - govet        # Disable unsafeptr check (false positive for runtime access)
+
 issues:
   # Show all issues
   max-issues-per-linter: 0

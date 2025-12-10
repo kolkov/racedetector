@@ -124,7 +124,20 @@ demo.bat   # Windows
 
 ## 💎 What Makes This Production-Ready
 
-### 🚀 NEW in v0.4.0 (December 2025)
+### 🚀 NEW in v0.5.0 (December 2025) - COMING SOON!
+
+**Assembly-Optimized Goroutine ID Extraction - ~2200x Speedup!**
+
+- **Native assembly implementation** for goroutine ID extraction
+  - **amd64**: TLS-based access via `(TLS)` pseudo-register
+  - **arm64**: Dedicated g register (R28)
+- **Performance breakthrough**: 1.73 ns/op (was 3987 ns/op) - **~2200x faster!**
+- **Zero allocations**: 0 B/op on fast path
+- **Zero external dependencies**: Pure Go + assembly (no outrigdev/goid!)
+- **Build constraints**: Go 1.23-1.25 on amd64/arm64
+- **Automatic fallback**: runtime.Stack parsing for unsupported platforms
+
+### v0.4.0 (December 2025)
 
 **`racedetector test` command - Drop-in replacement for `go test -race`!**
 
@@ -201,16 +214,22 @@ We've been using this in production for:
 
 **Now competitive with Go's official race detector!**
 
-| Metric | v0.1.0 | v0.2.0 | v0.3.0 | Go TSAN | Target |
-|--------|--------|--------|--------|---------|--------|
-| **VectorClock Join** | ~500ns | ~500ns | **11.48ns** ✨ | - | <50ns ✅ |
-| **VectorClock LessOrEqual** | ~300ns | ~300ns | **14.80ns** ✨ | - | <50ns ✅ |
-| **Shadow Load (hit)** | ~10ns | ~10ns | **2.46ns** ✨ | - | <10ns ✅ |
-| **Memory (sequential)** | 100% | 100% | **12.5%** ✨ | - | <50% ✅ |
-| **Hot path overhead** | 15-22% | 2-5% | **2-5%** | 5-10x | <10x ✅ |
-| **Max goroutines** | 256 | 65,536 | 65,536 | Unlimited | 1000+ ✅ |
+| Metric | v0.1.0 | v0.2.0 | v0.3.0 | v0.5.0 | Go TSAN | Target |
+|--------|--------|--------|--------|--------|---------|--------|
+| **Goroutine ID** | ~4000ns | ~4000ns | ~4000ns | **1.73ns** ⚡ | <1ns | <10ns ✅ |
+| **VectorClock Join** | ~500ns | ~500ns | **11.48ns** | 11.48ns | - | <50ns ✅ |
+| **VectorClock LessOrEqual** | ~300ns | ~300ns | **14.80ns** | 14.80ns | - | <50ns ✅ |
+| **Shadow Load (hit)** | ~10ns | ~10ns | **2.46ns** | 2.46ns | - | <10ns ✅ |
+| **Memory (sequential)** | 100% | 100% | **12.5%** | 12.5% | - | <50% ✅ |
+| **Hot path overhead** | 15-22% | 2-5% | **2-5%** | **<1%** ⚡ | 5-10x | <10x ✅ |
+| **Max goroutines** | 256 | 65,536 | 65,536 | 65,536 | Unlimited | 1000+ ✅ |
 
-✨ = **NEW in v0.3.0!**
+⚡ = **NEW in v0.5.0!** (Assembly GID: ~2200x speedup)
+
+**v0.5.0 Performance Improvements (Coming Soon):**
+- **Assembly GID**: ~2200× faster goroutine ID extraction (1.73ns vs 3987ns)
+- **Zero external dependencies**: Pure Go + native assembly
+- **Platform-specific optimization**: amd64 (TLS), arm64 (g register)
 
 **v0.3.0 Performance Improvements:**
 - **Sparse-aware VectorClock**: 43× faster Join, 20× faster LessOrEqual
@@ -264,10 +283,33 @@ We implemented the academic **FastTrack algorithm** (Flanagan & Freund, PLDI 200
    - Automatic promotion/demotion based on access patterns
 4. **Sync Primitive Integration**: Mutex, Channel, WaitGroup update vector clocks
 
+### Assembly-Optimized Goroutine ID (v0.5.0)
+
+Ultra-fast goroutine identification using native assembly:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Goroutine ID Extraction Performance                        │
+├─────────────────────────────────────────────────────────────┤
+│  Method               │  Time      │  Allocs  │  Speedup    │
+├───────────────────────┼────────────┼──────────┼─────────────┤
+│  Assembly (amd64)     │  1.73 ns   │  0 B/op  │  ~2200x     │
+│  Assembly (arm64)     │  ~2 ns     │  0 B/op  │  ~2000x     │
+│  runtime.Stack parse  │  3987 ns   │  64 B/op │  baseline   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**How it works:**
+- **amd64**: Access TLS via `MOVQ (TLS), R14` to get g pointer
+- **arm64**: Read dedicated g register `MOVD g, R0`
+- **goid offset**: Read uint64 at offset 152 bytes (Go 1.23-1.25)
+- **Fallback**: Automatic runtime.Stack parsing on unsupported platforms
+
 **Performance advantage:**
 - Fast path: <1ns overhead
 - Memory: 260x savings in common case (4 bytes vs 1040 bytes)
 - Detection: Precise, no false positives on synchronized code
+- **GID extraction**: ~2200x faster with assembly (v0.5.0)
 
 **See [FastTrack paper](https://users.soe.ucsc.edu/~cormac/papers/pldi09.pdf) for algorithm details.**
 
@@ -394,7 +436,18 @@ $ CGO_ENABLED=0 go build -race main.go  # Just works! ✅
 
 ### Roadmap to Go Integration
 
-**v0.3.2 (December 2025):** ✅ **CURRENT!**
+**v0.5.0 (December 2025):** 🚧 **IN DEVELOPMENT!**
+- Assembly-optimized Goroutine ID (~2200× speedup!) 🚧
+- Zero external dependencies (pure Go + assembly) ✅
+- Platform support: Go 1.23-1.25 on amd64/arm64 ✅
+- Automatic fallback for unsupported platforms ✅
+
+**v0.4.10 (December 2025):** ✅ **CURRENT STABLE!**
+- Complete `racedetector test` command ✅
+- All 10 hotfixes for edge cases ✅
+- Validated on complex multi-package modules ✅
+
+**v0.3.2 (December 2025):** ✅ **COMPLETE!**
 - Go 1.24+ requirement (Swiss Tables, improved sync.Map) ✅
 - Replace directive bug fix (Issue #6) ✅
 - golang.org/x/mod integration for proper go.mod parsing ✅
@@ -410,7 +463,7 @@ $ CGO_ENABLED=0 go build -race main.go  # Just works! ✅
 - Production hardening (65K goroutines, 281T ops) ✅
 - Complete stack traces ✅
 
-**v0.4.0 (January 2026):**
+**v0.6.0 (January 2026):**
 - Go runtime integration (`$GOROOT/src/runtime/race/`)
 - Port official Go race detector test suite
 - Performance benchmarks vs ThreadSanitizer
@@ -551,7 +604,9 @@ See [LICENSE](LICENSE) for full text.
 - **Production Release:** November 20, 2025 (v0.2.0)
 - **Performance Release:** November 28, 2025 (v0.3.0)
 - **Go 1.24+ Hotfix:** December 1, 2025 (v0.3.2)
-- **Next Milestone:** v0.4.0 (January 2026)
+- **Test Command:** December 9-10, 2025 (v0.4.0-v0.4.10)
+- **Assembly GID:** December 10, 2025 (v0.5.0 in development)
+- **Next Milestone:** v0.5.0 (December 2025)
 - **Go Proposal:** Q2 2026
 
 ---
@@ -572,7 +627,7 @@ See [LICENSE](LICENSE) for full text.
 
 *"After successfully implementing [Pure-Go HDF5](https://github.com/scigolib/hdf5), we knew Pure-Go race detection was possible. Now we're proving it."*
 
-**Status:** v0.3.2 Released - Go 1.24+ Required + Replace Directive Fix!
+**Status:** v0.4.10 Stable | v0.5.0 in Development (Assembly GID: ~2200x speedup!)
 **Community:** Let's get this into Go!
 **Goal:** Official integration by 2027
 

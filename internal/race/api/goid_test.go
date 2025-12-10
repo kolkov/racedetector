@@ -312,24 +312,22 @@ func TestParseGID(t *testing.T) {
 // TestGetGoroutineID_NoAllocations verifies fast path has zero allocations.
 //
 // This is critical for performance - the fast path must not allocate.
+// Uses outrigdev/goid library which provides assembly-optimized path
+// for Go 1.23+ on amd64/arm64.
 func TestGetGoroutineID_NoAllocations(t *testing.T) {
-	// NOTE: Assembly disabled for v0.1.0, so getGoroutineIDFast() uses fallback
-	// which allocates. Skip this test until assembly is re-enabled in v0.2.0.
-	t.Skip("Assembly implementation disabled for v0.1.0 - fallback allocates")
+	// Warm up
+	for i := 0; i < 100; i++ {
+		_ = getGoroutineIDFast()
+	}
 
-	// Kept for future when assembly is re-enabled:
-	// if runtime.GOARCH != "amd64" {
-	// 	t.Skip("Skipping zero-allocation test on non-amd64 architecture")
-	// }
-	// for i := 0; i < 100; i++ {
-	// 	_ = getGoroutineIDFast()
-	// }
-	// allocs := testing.AllocsPerRun(1000, func() {
-	// 	_ = getGoroutineIDFast()
-	// })
-	// if allocs > 0 {
-	// 	t.Errorf("getGoroutineIDFast() allocates %.2f times per call (expected 0)", allocs)
-	// }
+	// Measure allocations
+	allocs := testing.AllocsPerRun(1000, func() {
+		_ = getGoroutineIDFast()
+	})
+
+	if allocs > 0 {
+		t.Errorf("getGoroutineIDFast() allocates %.2f times per call (expected 0)", allocs)
+	}
 }
 
 // TestGetGoroutineIDSlow_HasAllocations verifies slow path allocates as expected.

@@ -51,7 +51,9 @@ jobs:
 
     - name: Run go vet
       if: matrix.os == 'ubuntu-latest'
-      run: go vet ./cmd/... ./internal/... ./race/...
+      # -unsafeptr=false: goid_fast.go uses intentional unsafe.Pointer arithmetic
+      # for runtime.g struct access (well-known pattern, safe for pinned memory)
+      run: go vet -unsafeptr=false ./cmd/... ./internal/... ./race/...
 
     - name: Run unit tests with coverage
       shell: bash
