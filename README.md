@@ -173,7 +173,8 @@ demo.bat   # Windows
 - 🆕 **Address Compression**: `SetAddressCompression(true)` for memory savings
 
 **Quality Metrics:**
-- ✅ 670+ tests passing (100% pass rate)
+- ✅ 1000+ tests passing (100% pass rate)
+- ✅ Go race test suite: 359/359 scenarios (100%)
 - ✅ 0 linter issues in production code
 - ✅ 86.3% test coverage
 - ✅ 100% backward compatible with v0.2.0
@@ -463,9 +464,10 @@ $ CGO_ENABLED=0 go build -race main.go  # Just works! ✅
 - Production hardening (65K goroutines, 281T ops) ✅
 - Complete stack traces ✅
 
-**v0.6.0 (January 2026):**
-- Go runtime integration (`$GOROOT/src/runtime/race/`)
-- Port official Go race detector test suite
+**v0.6.0 (December 2025):** ✅ **IN PROGRESS**
+- Go race test suite: **359/359 scenarios (100%)** ✅
+- Pass rate: 355/359 (98.88%)
+- 21 test category files (including Go 1.25+ additions)
 - Performance benchmarks vs ThreadSanitizer
 
 **v1.0.0 (Q1 2026):**

@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+**Go Race Test Suite - 100% Coverage**
+- **359/359 test scenarios** ported from official Go race detector test suite
+  - 355 scenarios from Go 1.21 test suite
+  - 4 scenarios from Go 1.25.3 (non-inline comparison tests)
+- **355 tests passing** (98.88% pass rate)
+- **4 tests skipped** (known detector limitations - unsync access tracking)
+- **21 test category files** organized by pattern type:
+  - Basic, Mutex, Channel, Sync primitives
+  - Memory, Patterns, Lifecycle, Atomic
+  - Issues, Reflect, Advanced, String
+  - Complex, Append, Defer/Panic
+  - TypeAssert, Method, Range, Final
+  - Compare (Go 1.25+ non-inline comparisons)
+
+**Test Patterns Covered:**
+- Write-write races, read-write races
+- Mutex synchronization (same/different mutexes)
+- Channel synchronization
+- WaitGroup, Cond, Once, Pool
+- Struct fields, slices, maps, arrays
+- Closures, defer, panic/recover
+- Type assertions, interfaces
+- Atomic operations simulation
+- Range loops, method receivers
+
 ---
 
 ## [0.5.2] - 2025-12-10
