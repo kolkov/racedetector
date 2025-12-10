@@ -328,8 +328,10 @@ func TestGoRace_RWMutexReadWrite(t *testing.T) {
 	var x int
 	addr := addrOf(&x)
 	ch := make(chan bool, 2)
+	start := make(chan struct{}) // Start barrier for concurrent execution.
 
 	go func() {
+		<-start
 		mu1.RLock()
 		RaceAcquire(uintptr(unsafe.Pointer(&mu1)))
 		simulateAccess(addr, false) // read x
@@ -339,6 +341,7 @@ func TestGoRace_RWMutexReadWrite(t *testing.T) {
 	}()
 
 	go func() {
+		<-start
 		mu2.Lock()
 		RaceAcquire(uintptr(unsafe.Pointer(&mu2)))
 		simulateAccess(addr, true) // write x (DIFFERENT lock!)
@@ -347,6 +350,7 @@ func TestGoRace_RWMutexReadWrite(t *testing.T) {
 		ch <- true
 	}()
 
+	close(start) // Release both goroutines simultaneously.
 	<-ch
 	<-ch
 
