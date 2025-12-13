@@ -2,8 +2,26 @@
 // Use of this source code is governed by a BSD-style license
 // that can be found in the LICENSE file.
 
-// Package api contains atomic-like synchronization tests.
-// These tests simulate atomic operations using mutex-based synchronization.
+// Package api contains acquire/release synchronization tests.
+//
+// IMPORTANT DISCLAIMER:
+// These tests verify that our race detector correctly tracks happens-before
+// relationships through Acquire/Release synchronization primitives.
+//
+// We use mutex to SIMULATE atomic operations because:
+// 1. We're testing our DETECTOR's clock propagation logic, not Go's atomics
+// 2. Go's race detector (ThreadSanitizer) treats atomic ops as acquire/release
+// 3. When Go compiles with -race, atomic.Store calls RaceRelease internally
+// 4. When Go compiles with -race, atomic.Load calls RaceAcquire internally
+//
+// These tests are equivalent to Go's official race/testdata/atomic_test.go
+// in terms of happens-before semantics, but test our detector's implementation
+// rather than the Go runtime.
+//
+// LIMITATION: Like all dynamic race detectors (including ThreadSanitizer),
+// we cannot detect races that depend on CPU/compiler memory reordering.
+// We observe actual execution order, not all possible reorderings.
+// See README.md "Atomic Operations" section for details.
 package api
 
 import (
