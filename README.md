@@ -68,14 +68,20 @@ All standard `go build`, `go run`, and `go test` flags are supported.
 ```go
 package main
 
+import "sync"
+
 var counter int
 
 func main() {
+    var wg sync.WaitGroup
     for i := 0; i < 10; i++ {
+        wg.Add(1)
         go func() {
+            defer wg.Done()
             counter++ // DATA RACE
         }()
     }
+    wg.Wait()
 }
 ```
 
@@ -84,10 +90,10 @@ func main() {
 $ racedetector build -o app main.go && ./app
 ==================
 WARNING: DATA RACE
-Write at 0xc00000a0b8 by goroutine 4:
-  main.main.func1 (main.go:8)
-Previous Write at 0xc00000a0b8 by goroutine 3:
-  main.main.func1 (main.go:8)
+Write at 0xc00000a0b8 by goroutine 7:
+  main.main.func1 (main.go:13)
+Previous Write at 0xc00000a0b8 by goroutine 6:
+  main.main.func1 (main.go:13)
 ==================
 ```
 
@@ -143,6 +149,17 @@ Ported **359 test scenarios** from Go's official race detector test suite:
 - Performance overhead higher than ThreadSanitizer for some workloads
 - Struct field access via dot notation has limited coverage
 - Assembly optimization only on amd64/arm64 (fallback available)
+
+### Atomic Operations
+
+Like Go's built-in race detector (ThreadSanitizer), this tool is a **dynamic race detector** based on happens-before analysis. It cannot detect races that depend on:
+
+- **Compiler/CPU memory reordering** - The detector observes actual execution order, not all possible reorderings
+- **Weak memory model semantics** - Atomic operations provide acquire/release barriers, but the detector uses full synchronization for tracking
+
+This is a fundamental limitation of all dynamic race detectors, not specific to this implementation. For detecting memory model violations, consider static analysis tools or formal verification.
+
+For more details, see [Go Race Detector documentation](https://go.dev/doc/articles/race_detector).
 
 ---
 

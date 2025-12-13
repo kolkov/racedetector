@@ -2,20 +2,24 @@ package main
 
 import (
 	"fmt"
-	"time"
+	"sync"
 )
 
 var counter int
 
-func increment() {
+func increment(wg *sync.WaitGroup) {
+	defer wg.Done()
 	counter++ // Race: concurrent write without synchronization
 }
 
 func main() {
-	// Start two goroutines that race on 'counter'
-	go increment()
-	go increment()
+	var wg sync.WaitGroup
 
-	time.Sleep(100 * time.Millisecond)
+	// Start two goroutines that race on 'counter'
+	wg.Add(2)
+	go increment(&wg)
+	go increment(&wg)
+
+	wg.Wait()
 	fmt.Println("Counter:", counter)
 }
