@@ -118,6 +118,16 @@ func InstrumentFile(filename string, src interface{}) (*InstrumentResult, error)
 		return nil, fmt.Errorf("failed to parse file %s: %w", filename, err)
 	}
 
+	// Step 1.5: Check for CGO files and skip instrumentation.
+	// CGO files use `import "C"` pseudo-package which cannot be processed
+	// by go/parser for C symbols. Skip these files to avoid compilation errors.
+	if isCGOFile(file) {
+		return &InstrumentResult{
+			Code:  "", // Empty code signals caller to copy file unchanged
+			Stats: InstrumentStats{CGOSkipped: true},
+		}, nil
+	}
+
 	// Step 2: Inject required imports at the top of the file.
 	// This adds:
 	//   - import race "github.com/kolkov/racedetector/internal/race/api"
@@ -212,4 +222,25 @@ func instrumentAST(fset *token.FileSet, file *ast.File) (*instrumentVisitor, err
 	}
 
 	return visitor, nil
+}
+
+// isCGOFile checks if the given AST file contains `import "C"`.
+//
+// CGO files cannot be fully processed by go/parser because C symbols
+// (like C.xxx) cannot be resolved. We skip instrumentation for these files
+// to avoid compilation errors.
+//
+// Parameters:
+//   - file: Parsed AST file to check
+//
+// Returns:
+//   - true if file contains `import "C"`, false otherwise
+func isCGOFile(file *ast.File) bool {
+	for _, imp := range file.Imports {
+		// Import path is stored as a quoted string, e.g., `"C"`
+		if imp.Path != nil && imp.Path.Value == `"C"` {
+			return true
+		}
+	}
+	return false
 }

@@ -340,19 +340,32 @@ func instrumentSources(config *buildConfig, workspace *workspace) error {
 		// Use just the filename (flatten directory structure for simplicity)
 		outPath := filepath.Join(workspace.srcDir, filepath.Base(srcPath))
 
+		// Handle CGO files: copy unchanged instead of instrumenting
+		if result.Stats.CGOSkipped {
+			// Read original file and copy to workspace unchanged
+			originalCode, readErr := os.ReadFile(srcPath)
+			if readErr != nil {
+				return fmt.Errorf("failed to read CGO file %s: %w", srcPath, readErr)
+			}
+			if err := os.WriteFile(outPath, originalCode, 0644); err != nil {
+				return fmt.Errorf("failed to copy CGO file %s: %w", outPath, err)
+			}
+			fmt.Printf("Skipped (CGO): %s\n", filepath.Base(srcPath))
+			continue
+		}
+
 		// Write instrumented code to workspace
 		if err := os.WriteFile(outPath, []byte(result.Code), 0644); err != nil {
 			return fmt.Errorf("failed to write instrumented file %s: %w", outPath, err)
 		}
 
 		// Print instrumentation info
-		fmt.Printf("Instrumented: %s -> %s\n", srcPath, outPath)
+		fmt.Printf("Instrumented: %s\n", filepath.Base(srcPath))
 
 		// If verbose, print statistics
 		if config.verbose {
 			stats := result.Stats
-			fmt.Printf("  - %d writes instrumented\n", stats.WritesInstrumented)
-			fmt.Printf("  - %d reads instrumented\n", stats.ReadsInstrumented)
+			fmt.Printf("  - %d writes, %d reads instrumented\n", stats.WritesInstrumented, stats.ReadsInstrumented)
 			if stats.TotalSkipped() > 0 {
 				fmt.Printf("  - %d items skipped (%d constants, %d built-ins, %d literals, %d blanks)\n",
 					stats.TotalSkipped(),
@@ -362,7 +375,6 @@ func instrumentSources(config *buildConfig, workspace *workspace) error {
 					stats.BlanksSkipped,
 				)
 			}
-			fmt.Printf("  Total: %d race detection calls inserted\n", stats.Total())
 		}
 	}
 

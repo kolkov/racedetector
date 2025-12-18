@@ -882,3 +882,66 @@ func main() {
 		}
 	}
 }
+
+// TestInstrumentFile_CGOSkipped tests that CGO files are detected and skipped.
+//
+// CGO files contain `import "C"` which introduces C symbols that cannot
+// be processed by go/parser. These files should be skipped to avoid
+// compilation errors like "could not determine what C.xxx refers to".
+//
+// Fixes: https://github.com/kolkov/racedetector/issues/16
+func TestInstrumentFile_CGOSkipped(t *testing.T) {
+	// CGO file with import "C"
+	input := `package main
+
+// #include <stdio.h>
+import "C"
+
+func main() {
+	C.puts(C.CString("hello"))
+}
+`
+
+	result, err := InstrumentFile("cgo_test.go", input)
+	if err != nil {
+		t.Fatalf("InstrumentFile failed for CGO file: %v", err)
+	}
+
+	// Should return empty code to signal file should be copied unchanged
+	if result.Code != "" {
+		t.Errorf("CGO file should return empty Code, got: %q", result.Code)
+	}
+
+	// Should set CGOSkipped flag
+	if !result.Stats.CGOSkipped {
+		t.Error("CGO file should have Stats.CGOSkipped = true")
+	}
+
+	t.Logf("CGO file correctly skipped (CGOSkipped=%v)", result.Stats.CGOSkipped)
+}
+
+// TestInstrumentFile_NonCGO tests that regular Go files are NOT skipped.
+func TestInstrumentFile_NonCGO(t *testing.T) {
+	input := `package main
+
+func main() {
+	x := 42
+	_ = x
+}
+`
+
+	result, err := InstrumentFile("regular.go", input)
+	if err != nil {
+		t.Fatalf("InstrumentFile failed: %v", err)
+	}
+
+	// Should NOT be skipped
+	if result.Stats.CGOSkipped {
+		t.Error("Regular Go file should NOT have CGOSkipped = true")
+	}
+
+	// Should have instrumented code
+	if result.Code == "" {
+		t.Error("Regular Go file should have non-empty Code")
+	}
+}

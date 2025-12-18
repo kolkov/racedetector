@@ -231,14 +231,28 @@ func instrumentTestSources(config *testConfig, workspace *workspace) error {
 			return fmt.Errorf("failed to create directory for %s: %w", outPath, err)
 		}
 
+		// Handle CGO files: copy unchanged instead of instrumenting
+		if result.Stats.CGOSkipped {
+			// Read original file and copy to workspace unchanged
+			originalCode, readErr := os.ReadFile(srcPath)
+			if readErr != nil {
+				return fmt.Errorf("failed to read CGO file %s: %w", srcPath, readErr)
+			}
+			if err := os.WriteFile(outPath, originalCode, 0644); err != nil {
+				return fmt.Errorf("failed to copy CGO file %s: %w", outPath, err)
+			}
+			fmt.Printf("Skipped (CGO): %s\n", relPath)
+			continue
+		}
+
 		// Write instrumented code to workspace
 		if err := os.WriteFile(outPath, []byte(result.Code), 0644); err != nil {
 			return fmt.Errorf("failed to write instrumented file %s: %w", outPath, err)
 		}
 
-		// Print instrumentation info (only in verbose mode)
+		// Print instrumentation info
+		fmt.Printf("Instrumented: %s\n", relPath)
 		if config.verbose {
-			fmt.Printf("Instrumented: %s\n", relPath)
 			stats := result.Stats
 			if stats.Total() > 0 {
 				fmt.Printf("  - %d writes, %d reads instrumented\n",
