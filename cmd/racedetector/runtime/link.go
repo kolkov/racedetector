@@ -9,14 +9,36 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 
 	"golang.org/x/mod/modfile"
 )
 
 // Version is the current racedetector version for go.mod requires.
-// Update this when releasing new versions.
-const Version = "v0.4.10"
+// This is set at build time via ldflags for releases.
+// Default "dev" is used for local development (with replace directive).
+//
+// Set via: -ldflags "-X github.com/kolkov/racedetector/cmd/racedetector/runtime.Version=v0.7.0"
+var Version = "dev"
+
+// GetVersion returns the effective version string.
+// Priority:
+//  1. ldflags-injected Version (from GoReleaser builds)
+//  2. Build info version (from "go install @version")
+//  3. Default "dev" (for local development)
+func GetVersion() string {
+	if Version != "dev" {
+		return Version
+	}
+	// Fallback: try to get version from build info (go install @version)
+	if info, ok := debug.ReadBuildInfo(); ok {
+		if info.Main.Version != "" && info.Main.Version != "(devel)" {
+			return info.Main.Version
+		}
+	}
+	return "dev"
+}
 
 // GetRuntimePackagePath returns the import path for the race detector runtime.
 //
@@ -212,7 +234,7 @@ func ModFileOverlay(tempDir, sourceDir string) (string, error) {
 		content.WriteString(fmt.Sprintf("replace github.com/kolkov/racedetector => %s\n", projectRoot))
 	} else {
 		// Published mode (CI, installed via go install) - require published package
-		content.WriteString(fmt.Sprintf("require github.com/kolkov/racedetector %s\n", Version))
+		content.WriteString(fmt.Sprintf("require github.com/kolkov/racedetector %s\n", GetVersion()))
 	}
 
 	// Find and parse original project's go.mod to:

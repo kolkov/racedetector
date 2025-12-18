@@ -13,11 +13,17 @@ builds:
     main: ./cmd/racedetector
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
+    # Reproducible builds: https://goreleaser.com/blog/reproducible-builds/
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
     ldflags:
       - -s -w
       - -X main.version={{.Version}}
       - -X main.commit={{.Commit}}
       - -X main.date={{.CommitDate}}
+      # Inject version into runtime package for go.mod overlay
+      - -X github.com/kolkov/racedetector/cmd/racedetector/runtime.Version={{.Version}}
     env:
       - CGO_ENABLED=0
     # Ignore build errors for unsupported combinations
