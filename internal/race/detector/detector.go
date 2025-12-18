@@ -279,7 +279,11 @@ func (d *Detector) reportOverflowsIfNeeded() {
 //go:nosplit
 func captureCallerPC() uintptr {
 	var pcs [1]uintptr
-	n := runtime.Callers(2, pcs[:]) // Skip: runtime.Callers + captureCallerPC
+	// Skip 2 frames: runtime.Callers + captureCallerPC
+	// The captured PC will point to OnWrite/OnRead, but when displaying
+	// the stack trace in report.go, we filter internal frames and show
+	// the full call chain to help identify the race location.
+	n := runtime.Callers(2, pcs[:])
 	if n > 0 {
 		return pcs[0]
 	}

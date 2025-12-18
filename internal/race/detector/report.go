@@ -285,18 +285,14 @@ func NewRaceReportWithStacks(raceType string, addr uintptr, vsInterface interfac
 		}
 
 		// Lazy stack capture (v0.3.0 Performance):
-		// NOW we capture the full stack, but only when race is detected!
-		// This moves the expensive operation (~500ns) from hot path to race reporting.
+		// We store only the caller PC on the hot path (~5ns instead of ~500ns).
+		// When a race is detected, we use the stored PC to show at least the function name.
 		if prevPC != 0 {
-			// Capture full stack starting from the stored PC.
-			// We reconstruct the stack by walking from the PC.
-			// Note: This is approximate - we get current stack, not exact previous stack.
-			// For exact stack, we'd need to store the full stack trace at access time.
-			// Trade-off: Performance (50x faster hot path) vs. Perfect stack traces.
-
-			// For now, use captureStackTrace to get current context.
-			// TODO: Future enhancement: Use prevPC to construct more accurate stack.
-			previousStack = captureStackTrace(4) // Best effort
+			// Use the stored PC to create a minimal stack trace.
+			// This shows at least the function name and file:line of the previous access.
+			// Trade-off: Performance (50x faster hot path) vs. Full stack depth.
+			// For full stack, we'd need to store all frames at access time (~500ns).
+			previousStack = []uintptr{prevPC}
 		} else if prevStackHash != 0 {
 			// Legacy fallback: Use old stack hash if PC not available.
 			// This supports transition period where some accesses may still use old method.
@@ -481,10 +477,9 @@ func (r *RaceReport) Format(w io.Writer) {
 	if len(r.Previous.StackTrace) > 0 {
 		fmt.Fprint(w, formatStackTrace(r.Previous.StackTrace))
 	} else {
-		// Previous access stack trace not available (would require
-		// storing stack traces in shadow memory).
+		// Previous access stack trace not available.
+		// This happens if the VarState was just created or PC was not captured.
 		fmt.Fprintf(w, "  (previous access stack trace not available)\n")
-		fmt.Fprintf(w, "  (future enhancement: store stack traces in shadow memory)\n")
 	}
 
 	fmt.Fprintf(w, "  [epoch: %s]\n", r.Previous.Epoch.String())
