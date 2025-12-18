@@ -17,12 +17,14 @@ func TestParseTestArgs(t *testing.T) {
 	defer func() { _ = os.Chdir(cwd) }()
 
 	tests := []struct {
-		name         string
-		args         []string
-		wantPackages []string
-		wantFlags    []string
-		wantVerbose  bool
-		wantErr      bool
+		name            string
+		args            []string
+		wantPackages    []string
+		wantFlags       []string
+		wantVerbose     bool
+		wantCompileOnly bool
+		wantOutputFile  string
+		wantErr         bool
 	}{
 		{
 			name:         "no args - default to current dir",
@@ -87,6 +89,41 @@ func TestParseTestArgs(t *testing.T) {
 			wantFlags:    []string{},
 			wantVerbose:  false,
 		},
+		{
+			name:            "compile only flag",
+			args:            []string{"-c", "./..."},
+			wantPackages:    []string{"./..."},
+			wantFlags:       []string{"-c"},
+			wantVerbose:     false,
+			wantCompileOnly: true,
+		},
+		{
+			name:            "compile with output flag",
+			args:            []string{"-c", "-o", "mytest", "./..."},
+			wantPackages:    []string{"./..."},
+			wantFlags:       []string{"-c"},
+			wantVerbose:     false,
+			wantCompileOnly: true,
+			wantOutputFile:  "mytest",
+		},
+		{
+			name:            "output flag with equals",
+			args:            []string{"-c", "-o=mytest.exe", "./pkg"},
+			wantPackages:    []string{"./pkg"},
+			wantFlags:       []string{"-c"},
+			wantVerbose:     false,
+			wantCompileOnly: true,
+			wantOutputFile:  "mytest.exe",
+		},
+		{
+			name:            "verbose compile with output",
+			args:            []string{"-v", "-c", "-o", "test.bin", "./..."},
+			wantPackages:    []string{"./..."},
+			wantFlags:       []string{"-v", "-c"},
+			wantVerbose:     true,
+			wantCompileOnly: true,
+			wantOutputFile:  "test.bin",
+		},
 	}
 
 	for _, tt := range tests {
@@ -125,6 +162,16 @@ func TestParseTestArgs(t *testing.T) {
 			// Check verbose
 			if config.verbose != tt.wantVerbose {
 				t.Errorf("verbose = %v, want %v", config.verbose, tt.wantVerbose)
+			}
+
+			// Check compileOnly
+			if config.compileOnly != tt.wantCompileOnly {
+				t.Errorf("compileOnly = %v, want %v", config.compileOnly, tt.wantCompileOnly)
+			}
+
+			// Check outputFile
+			if config.outputFile != tt.wantOutputFile {
+				t.Errorf("outputFile = %q, want %q", config.outputFile, tt.wantOutputFile)
 			}
 		})
 	}

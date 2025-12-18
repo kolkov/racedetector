@@ -52,6 +52,32 @@ func BenchmarkRuntimeCallers(b *testing.B) {
 	}
 }
 
+// BenchmarkRuntimeCallers8 measures runtime.Callers with 8 frames.
+func BenchmarkRuntimeCallers8(b *testing.B) {
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	var pcs [8]uintptr
+	for i := 0; i < b.N; i++ {
+		runtime.Callers(2, pcs[:])
+	}
+}
+
+// BenchmarkFuncForPC measures runtime.FuncForPC performance.
+func BenchmarkFuncForPC(b *testing.B) {
+	var pcs [1]uintptr
+	runtime.Callers(2, pcs[:])
+	pc := pcs[0]
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		fn := runtime.FuncForPC(pc)
+		_ = fn.Name()
+	}
+}
+
 // BenchmarkOnWrite_WithLazyStackCapture measures OnWrite with lazy stack capture.
 //
 // This benchmark shows the real-world impact on the hot path.

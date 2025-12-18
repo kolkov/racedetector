@@ -26,6 +26,12 @@ type testConfig struct {
 
 	// Verbose output flag (-v)
 	verbose bool
+
+	// Output file for -c -o (compile test binary without running)
+	outputFile string
+
+	// Compile only flag (-c)
+	compileOnly bool
 }
 
 // testCommand implements the 'racedetector test' command.
@@ -126,6 +132,30 @@ func parseTestArgs(args []string) (*testConfig, error) {
 		if arg == "-v" {
 			config.verbose = true
 			config.testFlags = append(config.testFlags, arg)
+			continue
+		}
+
+		// Handle -c flag (compile only, don't run)
+		if arg == "-c" {
+			config.compileOnly = true
+			config.testFlags = append(config.testFlags, arg)
+			continue
+		}
+
+		// Handle -o flag (output file) - need to track for later copying
+		if arg == "-o" {
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("-o flag requires an argument")
+			}
+			i++
+			config.outputFile = args[i]
+			// Don't add to testFlags yet - we'll handle output path in runTests
+			continue
+		}
+
+		// Handle -o=file format
+		if strings.HasPrefix(arg, "-o=") {
+			config.outputFile = strings.TrimPrefix(arg, "-o=")
 			continue
 		}
 
@@ -408,6 +438,14 @@ func runTests(workspace *workspace, config *testConfig) int {
 	runtimeFlags := runtime.BuildFlags()
 	args = append(args, runtimeFlags...)
 
+	// Handle -o flag: compile to temp location, then copy to user's desired path
+	var tempOutputPath string
+	if config.outputFile != "" {
+		// When using -c -o, we compile to workspace then copy to user path
+		tempOutputPath = filepath.Join(workspace.srcDir, "test.exe")
+		args = append(args, "-o", tempOutputPath)
+	}
+
 	// Test the current package (instrumented sources are in workspace)
 	args = append(args, "./...")
 
@@ -429,5 +467,47 @@ func runTests(workspace *workspace, config *testConfig) int {
 		return 1
 	}
 
+	// If -o was specified, copy the compiled binary to user's desired location
+	if config.outputFile != "" && tempOutputPath != "" {
+		// Make output path absolute if relative
+		outputPath := config.outputFile
+		if !filepath.IsAbs(outputPath) {
+			outputPath = filepath.Join(config.workDir, outputPath)
+		}
+
+		// Copy the binary
+		if err := copyFile(tempOutputPath, outputPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Error copying test binary: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Test binary written to: %s\n", config.outputFile)
+	}
+
 	return 0
+}
+
+// copyFile copies a file from src to dst.
+func copyFile(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return fmt.Errorf("failed to read %s: %w", src, err)
+	}
+
+	// Get source file permissions
+	srcInfo, err := os.Stat(src)
+	if err != nil {
+		return fmt.Errorf("failed to stat %s: %w", src, err)
+	}
+
+	// Create destination directory if needed
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return fmt.Errorf("failed to create directory for %s: %w", dst, err)
+	}
+
+	// Write with same permissions as source (executable)
+	if err := os.WriteFile(dst, data, srcInfo.Mode()); err != nil {
+		return fmt.Errorf("failed to write %s: %w", dst, err)
+	}
+
+	return nil
 }

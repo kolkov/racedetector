@@ -168,6 +168,7 @@ func captureStackTrace(skip int) []uintptr {
 // Returns a formatted string ready for inclusion in race reports.
 //
 // Phase 5 Task 5.2: Stack trace formatting implementation.
+// v0.7.1: Improved handling of single-PC inputs (from lazy stack capture).
 func formatStackTrace(pcs []uintptr) string {
 	if len(pcs) == 0 {
 		return "  (no stack trace available)\n"
@@ -175,40 +176,26 @@ func formatStackTrace(pcs []uintptr) string {
 
 	frames := runtime.CallersFrames(pcs)
 	var buf strings.Builder
+	var firstFrame *runtime.Frame // Store first frame in case all get filtered
 
 	for {
 		frame, more := frames.Next()
 
-		// Skip runtime internal frames and detector internal frames
-		if strings.HasPrefix(frame.Function, "runtime.") ||
-			strings.HasPrefix(frame.Function, "internal/") ||
-			strings.Contains(frame.Function, "/race/detector.(*Detector).OnWrite") ||
-			strings.Contains(frame.Function, "/race/detector.(*Detector).OnRead") ||
-			strings.Contains(frame.Function, "/race/detector.(*Detector).OnAcquire") ||
-			strings.Contains(frame.Function, "/race/detector.(*Detector).OnRelease") ||
-			strings.Contains(frame.Function, "/race/detector.(*Detector).OnChannel") ||
-			strings.Contains(frame.Function, "/race/detector.(*Detector).OnWaitGroup") {
+		// Store first frame as fallback (v0.7.1: show something even if internal)
+		if firstFrame == nil {
+			frameCopy := frame
+			firstFrame = &frameCopy
+		}
+
+		// Skip internal frames
+		if isInternalStackFrame(frame.Function) {
 			if !more {
 				break
 			}
 			continue
 		}
 
-		// Format: function name with parentheses
-		buf.WriteString("  ")
-		buf.WriteString(frame.Function)
-		buf.WriteString("()\n")
-
-		// Format: file path and line number with offset
-		buf.WriteString("      ")
-		buf.WriteString(frame.File)
-		buf.WriteString(":")
-		buf.WriteString(fmt.Sprintf("%d", frame.Line))
-
-		// Calculate offset from PC (for matching Go's output)
-		// Note: This is approximate, actual offset calculation is complex
-		buf.WriteString(fmt.Sprintf(" +0x%x", frame.PC&0xfff))
-		buf.WriteString("\n")
+		writeFrameToBuffer(&buf, &frame)
 
 		if !more {
 			break
@@ -217,10 +204,38 @@ func formatStackTrace(pcs []uintptr) string {
 
 	result := buf.String()
 	if result == "" {
-		return "  (all frames filtered - runtime internal)\n"
+		// v0.7.1: If all frames were filtered but we had a single PC,
+		// show that frame anyway (better than nothing for debugging)
+		if len(pcs) == 1 && firstFrame != nil {
+			writeFrameToBuffer(&buf, firstFrame)
+			return buf.String()
+		}
+		return "  (previous access stack trace not available)\n"
 	}
 
 	return result
+}
+
+// isInternalStackFrame returns true if the function should be filtered from stack traces.
+func isInternalStackFrame(funcName string) bool {
+	return strings.HasPrefix(funcName, "runtime.") ||
+		strings.HasPrefix(funcName, "internal/") ||
+		strings.Contains(funcName, "/race/detector.(*Detector).OnWrite") ||
+		strings.Contains(funcName, "/race/detector.(*Detector).OnRead") ||
+		strings.Contains(funcName, "/race/detector.(*Detector).OnAcquire") ||
+		strings.Contains(funcName, "/race/detector.(*Detector).OnRelease") ||
+		strings.Contains(funcName, "/race/detector.(*Detector).OnChannel") ||
+		strings.Contains(funcName, "/race/detector.(*Detector).OnWaitGroup")
+}
+
+// writeFrameToBuffer writes a formatted stack frame to the buffer.
+func writeFrameToBuffer(buf *strings.Builder, frame *runtime.Frame) {
+	buf.WriteString("  ")
+	buf.WriteString(frame.Function)
+	buf.WriteString("()\n      ")
+	buf.WriteString(frame.File)
+	buf.WriteString(":")
+	fmt.Fprintf(buf, "%d +0x%x\n", frame.Line, frame.PC&0xfff)
 }
 
 // NewRaceReportWithStacks creates a RaceReport with complete stack traces.

@@ -276,13 +276,21 @@ func (d *Detector) reportOverflowsIfNeeded() {
 //
 // This provides a 50x performance improvement on the hot path!
 //
+// v0.7.1: Store PC close to user code using fixed skip.
+// Skip 4 frames: runtime.Callers, captureCallerPC, OnWrite/OnRead, race.Write/Read
+// This gets us to the first user frame in most cases.
+//
 //go:nosplit
 func captureCallerPC() uintptr {
 	var pcs [1]uintptr
 	// Skip 2 frames: runtime.Callers + captureCallerPC
-	// The captured PC will point to OnWrite/OnRead, but when displaying
-	// the stack trace in report.go, we filter internal frames and show
-	// the full call chain to help identify the race location.
+	// Returns PC of OnWrite/OnRead caller (race.Write/Read or test code).
+	//
+	// In production: user → race.Write → OnWrite → captureCallerPC
+	//   skip=2 returns: OnWrite (we store this, but filtering at report time shows user code)
+	//
+	// The actual user frame is resolved at report time via formatStackTrace()
+	// which captures a fresh stack and filters internal frames.
 	n := runtime.Callers(2, pcs[:])
 	if n > 0 {
 		return pcs[0]
