@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2025-12-18
+
+### Fixed
+
+**Bug Fixes from @glycerine (Issues #15, #16, #17)**
+
+- **Test command flags** (Issue #15):
+  - `-c` flag now works correctly (compile only, don't run)
+  - `-o` flag now works correctly (output file path)
+  - Compiled binary is copied to specified output path
+
+- **Version injection** (Issue #15):
+  - Fixed hardcoded version (was showing v0.4.10)
+  - Version now injected via GoReleaser ldflags from git tag
+
+- **CGO file handling** (Issue #16):
+  - CGO files (`import "C"`) are now detected and copied unchanged
+  - Skips instrumentation to avoid C symbol errors
+
+- **Stack traces** (Issue #17):
+  - `captureCallerPC()` now captures user-code PC correctly
+  - `formatStackTrace()` filters internal frames (OnWrite, OnRead, runtime.*)
+  - Shows user code location instead of internal detector frames
+
+### Performance
+
+- Stack trace capture: ~145ns per access (runtime.Callers baseline on Windows)
+- Overall overhead remains within <20x target
+- Further optimization tracked in Issue #18 for v0.8.0
+
+---
+
 ## [0.7.0] - 2025-12-11
 
 ### Performance
