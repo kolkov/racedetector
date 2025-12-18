@@ -31,12 +31,13 @@ import (
 //
 //nolint:revive // InstrumentStats is clear and descriptive despite stuttering
 type InstrumentStats struct {
-	ReadsInstrumented  int // Number of read operations instrumented
-	WritesInstrumented int // Number of write operations instrumented
-	ConstantsSkipped   int // Number of constants skipped (const declarations)
-	BuiltinsSkipped    int // Number of built-in identifiers skipped (nil, true, false, iota)
-	LiteralsSkipped    int // Number of literals skipped (42, "hello", 3.14)
-	BlanksSkipped      int // Number of blank identifiers (_) skipped
+	ReadsInstrumented  int  // Number of read operations instrumented
+	WritesInstrumented int  // Number of write operations instrumented
+	ConstantsSkipped   int  // Number of constants skipped (const declarations)
+	BuiltinsSkipped    int  // Number of built-in identifiers skipped (nil, true, false, iota)
+	LiteralsSkipped    int  // Number of literals skipped (42, "hello", 3.14)
+	BlanksSkipped      int  // Number of blank identifiers (_) skipped
+	CGOSkipped         bool // True if file was skipped due to CGO (import "C")
 }
 
 // Total returns total number of instrumented accesses.

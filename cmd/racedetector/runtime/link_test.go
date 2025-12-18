@@ -25,6 +25,27 @@ func TestGetRuntimePackagePath(t *testing.T) {
 	}
 }
 
+// TestGetVersion verifies version detection priority.
+func TestGetVersion(t *testing.T) {
+	version := GetVersion()
+
+	// In development mode, Version is "dev" but GetVersion() may return
+	// build info version if available, or "dev" as fallback
+	if version == "" {
+		t.Error("GetVersion() returned empty string")
+	}
+
+	// Version should be either:
+	// - "dev" (development)
+	// - "vX.Y.Z" (release via ldflags or go install @version)
+	// - "(devel)" should NOT be returned (filtered out)
+	if version == "(devel)" {
+		t.Error("GetVersion() should not return (devel)")
+	}
+
+	t.Logf("GetVersion() = %q (Version var = %q)", version, Version)
+}
+
 // TestGetRuntimeInitCode verifies the initialization code is correct.
 func TestGetRuntimeInitCode(t *testing.T) {
 	code := GetRuntimeInitCode()

@@ -3,6 +3,7 @@ package detector
 import (
 	"bytes"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -1013,4 +1014,26 @@ func TestConcurrentReadsAndWrites(_ *testing.T) {
 	}
 
 	// Test passes if no panics occurred.
+}
+
+// TestCaptureCallerPC tests that captureCallerPC returns a valid PC.
+func TestCaptureCallerPC(t *testing.T) {
+	pc := captureCallerPC()
+	if pc == 0 {
+		t.Error("captureCallerPC() returned 0, expected non-zero PC")
+	}
+
+	// Verify we got a valid PC
+	fn := runtime.FuncForPC(pc)
+	if fn == nil {
+		t.Error("runtime.FuncForPC returned nil for captured PC")
+		return
+	}
+
+	name := fn.Name()
+	t.Logf("captureCallerPC with skip=2 returns: %s", name)
+
+	// With skip=2, we expect the immediate caller (this test function)
+	// In production: OnWrite→captureCallerPC, so we'd get OnWrite's caller (race.Write)
+	// The actual user frame is filtered at report time
 }
