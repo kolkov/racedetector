@@ -754,5 +754,5 @@ If you need help:
 
 ---
 
-*Last Updated: December 8, 2025*
-*Version: 0.4.0-dev (test command + IncDecStmt fix)*
+*Last Updated: December 19, 2025*
+*Version: 0.8.4*
