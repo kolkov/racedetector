@@ -470,6 +470,16 @@ func (v *instrumentVisitor) visitAssignment(stmt *ast.AssignStmt) {
 // Parameters:
 //   - stmt: IncDecStmt node
 func (v *instrumentVisitor) visitIncDec(stmt *ast.IncDecStmt) {
+	// v0.8.3: Fix for Issue #30 - handle SelectorExpr specially in IncDecStmt
+	// In IncDecStmt context, we KNOW the operand is addressable (otherwise Go won't compile)
+	// So we can safely instrument SelectorExpr here even though shouldInstrument skips it
+	if sel, ok := stmt.X.(*ast.SelectorExpr); ok {
+		// s.x++ - struct field access, must instrument
+		// Pass stmt as parent so findParentStatement works correctly
+		v.visitSelectorInModifyContext(stmt, sel)
+		return
+	}
+
 	// Skip if this expression shouldn't be instrumented
 	if !shouldInstrument(stmt.X) {
 		v.trackSkipped(stmt.X)
@@ -990,6 +1000,54 @@ func (v *instrumentVisitor) visitStarExpr(expr *ast.StarExpr) {
 		Addr:       addr,
 	})
 	v.stats.ReadsInstrumented++
+}
+
+// visitSelectorInModifyContext handles struct field access in modify contexts (IncDecStmt, AssignStmt LHS).
+//
+// v0.8.3: Fix for Issue #30 - in modify contexts we KNOW the selector is addressable
+// (otherwise Go wouldn't compile), so we can safely instrument it.
+//
+// Examples:
+//
+//	s.x++         → RaceRead(&s.x), RaceWrite(&s.x)
+//	s.field = 42  → RaceWrite(&s.field)
+//
+// Parameters:
+//   - parentStmt: The parent statement (IncDecStmt or AssignStmt) - used as Node for instrumentation
+//   - expr: SelectorExpr being modified
+//
+// IMPORTANT: We use parentStmt as Node (not expr) because findParentStatement()
+// needs a Stmt to work correctly. If we pass SelectorExpr, findParentStatement
+// returns the outermost containing statement (BlockStmt), not the IncDecStmt.
+func (v *instrumentVisitor) visitSelectorInModifyContext(parentStmt ast.Stmt, expr *ast.SelectorExpr) {
+	// For s.x, we need to take address of the field: &s.x
+	// Create UnaryExpr with & operator wrapping the SelectorExpr
+	addrExpr := &ast.UnaryExpr{
+		Op: token.AND,
+		X:  expr,
+	}
+
+	// Record READ (value is read before modification in ++ case)
+	// Use parentStmt as Node so findParentStatement returns correct statement
+	v.instrumentationPoints = append(v.instrumentationPoints, InstrumentPoint{
+		Node:       parentStmt,
+		AccessType: AccessRead,
+		Addr:       addrExpr,
+	})
+	v.stats.ReadsInstrumented++
+
+	// Record WRITE (new value is written back)
+	// Create a separate address expression to avoid AST sharing
+	addrExprWrite := &ast.UnaryExpr{
+		Op: token.AND,
+		X:  expr,
+	}
+	v.instrumentationPoints = append(v.instrumentationPoints, InstrumentPoint{
+		Node:       parentStmt,
+		AccessType: AccessWrite,
+		Addr:       addrExprWrite,
+	})
+	v.stats.WritesInstrumented++
 }
 
 // visitIndexAccess handles array/slice accesses: arr[0], slice[i].
