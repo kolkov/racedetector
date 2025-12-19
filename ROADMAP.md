@@ -3,7 +3,7 @@
 > **Strategic Advantage**: Proven FastTrack algorithm implementation without CGO dependency!
 > **Approach**: Scientific algorithm + Go best practices - eliminates C++ ThreadSanitizer dependency
 
-**Last Updated**: 2025-12-10 | **Current Version**: v0.4.10 (STABLE) | v0.5.0 (IN DEVELOPMENT) | **Strategy**: MVP → Optimization + Hardening → Advanced Optimizations → Assembly GID → Runtime Integration → Go Proposal | **Milestone**: v0.5.0 (Assembly GID) → v0.6.0 (Runtime Integration) → v1.0.0 (Q1 2026)
+**Last Updated**: 2025-12-19 | **Current Version**: v0.8.0 (STABLE) | **Strategy**: MVP → Optimization + Hardening → Advanced Optimizations → Assembly GID → Test Suite → Escape Analysis → Runtime Integration → Go Proposal | **Milestone**: v0.8.0 (Escape Analysis) → v0.9.0 (Polish) → v1.0.0 (Q1 2026)
 
 ---
 
@@ -50,10 +50,16 @@ v0.3.2 (Go 1.24+ & Bug Fixes) ✅ RELEASED 2025-12-01
          ↓ (Go 1.24+ requirement, replace directive fix)
 v0.4.0-v0.4.10 (Test Command) ✅ RELEASED 2025-12-09/10
          ↓ (racedetector test command, 10 hotfixes)
-v0.5.0 (Assembly GID) 🚧 IN DEVELOPMENT
+v0.5.0-v0.5.2 (Assembly GID) ✅ RELEASED 2025-12-10
          ↓ (~2200× faster goroutine ID extraction!)
-v0.6.0 (Go Runtime Integration) → Replace ThreadSanitizer in Go toolchain
-         ↓ (1-2 months testing)
+v0.6.0 (Go Race Test Suite) ✅ RELEASED 2025-12-11
+         ↓ (359 test scenarios, 100% pass rate!)
+v0.7.0-v0.7.2 (Stack Traces & Hotfixes) ✅ RELEASED 2025-12-18/19
+         ↓ (Performance optimizations, false positive fixes)
+v0.8.0 (Escape Analysis) ✅ RELEASED 2025-12-19
+         ↓ (30-50% fewer false positives, toolexec command!)
+v0.9.0 (Polish & Stabilization) → Final polish before v1.0
+         ↓ (1-2 weeks)
 v1.0.0 LTS → Production-ready with Go community adoption (Q1 2026)
 ```
 
@@ -146,16 +152,18 @@ v1.0.0 LTS → Production-ready with Go community adoption (Q1 2026)
 
 ---
 
-## 📊 Current Status (v0.4.10 Stable | v0.5.0 In Development)
+## 📊 Current Status (v0.8.0 Stable)
 
-**Phase**: 🚧 Assembly GID Optimization (v0.5.0 branch: feature/assembly-goid)
-**Detector**: Production-grade! Now with ~2200× faster goroutine ID! ⚡
-**AST Instrumentation**: Complete! Test command fully working! ✅
+**Phase**: ✅ Escape Analysis Integration Complete!
+**Detector**: Production-grade with 30-50% fewer false positives! ⚡
+**AST Instrumentation**: Complete with escape analysis! ✅
 
 **What Works**:
 - ✅ `racedetector build` command (drop-in for `go build`)
 - ✅ `racedetector run` command (drop-in for `go run`)
-- ✅ `racedetector test` command (drop-in for `go test -race`) **NEW in v0.4.0!**
+- ✅ `racedetector test` command (drop-in for `go test -race`)
+- ✅ `racedetector toolexec` command (for `go build -toolexec`) **NEW in v0.8.0!**
+- ✅ **Escape analysis integration** (30-50% fewer false positives) **NEW in v0.8.0!**
 - ✅ **FastTrack algorithm** (write/read race detection)
 - ✅ **CAS-based shadow memory** (81.4% faster, 0 allocations)
 - ✅ **BigFoot coalescing** (90% barrier reduction)
@@ -168,9 +176,10 @@ v1.0.0 LTS → Production-ready with Go community adoption (Q1 2026)
 - ✅ **Race deduplication** (no report spam)
 - ✅ **Overflow detection** (warnings at 90% threshold)
 - ✅ **Smart filtering** (skips constants, built-ins, literals)
+- ✅ **Assembly GID** (~2200× faster goroutine ID)
+- ✅ **359 test scenarios** from Go race detector test suite (100% pass rate)
 - ✅ **Professional errors** (file:line:column with suggestions)
 - ✅ **Verbose mode** (`-v` flag shows instrumentation stats)
-- 🚧 **Assembly GID** (~2200× faster goroutine ID) **IN DEVELOPMENT!**
 
 **Example Race Detection (v0.2.0)**:
 ```bash
@@ -214,36 +223,53 @@ Previous Write at 0xc00000a0b8 by goroutine 3:
 
 ## 📅 What's Next
 
-### **v0.5.0 - Assembly-Optimized Goroutine ID** (December 2025) [IN DEVELOPMENT! 🚧]
+### **v0.8.0 - Escape Analysis Integration** (December 2025) [RELEASED! ✅]
 
-**Goal**: ~2200× faster goroutine ID extraction with native assembly
+**Goal**: Reduce false positives using compiler escape analysis
 
-**Duration**: 1 day (December 10, 2025)
+**Duration**: 1 day (December 19, 2025)
 
-**Status**: 🚧 Implementation complete, testing and documentation in progress
-
-**Branch**: `feature/assembly-goid`
+**Status**: ✅ RELEASED
 
 **What's Done**:
-1. ✅ **goid_amd64.s** - Native assembly for x86-64 (TLS access)
-2. ✅ **goid_arm64.s** - Native assembly for ARM64 (g register)
-3. ✅ **goid_fast.go** - Go wrapper with offset logic (152 bytes)
-4. ✅ **goid_fallback.go** - Fallback for unsupported platforms
-5. ✅ **goid_generic.go** - Common utilities (parseGID, getGoroutineIDSlow)
-6. ✅ **Benchmarks** - 1.73 ns/op (was 3987 ns/op)
-7. ✅ **Tests** - All passing including fast vs slow validation
-8. 🚧 **Documentation** - Updating README, CHANGELOG, ROADMAP
+1. ✅ **escape.go** - Parser for `go build -gcflags="-m"` output
+2. ✅ **escape_test.go** - Unit tests for escape analysis parser
+3. ✅ **escape_integration_test.go** - Integration tests
+4. ✅ **toolexec.go** - New `racedetector toolexec` command
+5. ✅ **InstrumentOptions** - EscapeInfo support in instrumentor
+6. ✅ **30-50% instrumentation reduction** on real codebases
+7. ✅ **Tested on zygomys** (Issue #17 - false positives eliminated)
 
-**Performance Results**:
-```
-BenchmarkGetGoroutineID_Fast-12    1.73 ns/op    0 B/op    0 allocs/op
-BenchmarkGetGoroutineID_Slow-12    3987 ns/op   64 B/op    1 allocs/op
-```
+**Key Results**:
+- lexer.go: 14 writes/35 reads → 9 writes/18 reads (36%/49% reduction)
+- Named return value false positives: eliminated
+- Function parameter false positives: eliminated
 
-**Strategic Decision**: Zero external dependencies!
-- Evaluated outrigdev/goid but chose own implementation
-- If Go team accepts detector into runtime, GID is their responsibility
-- External dependency would complicate Go proposal acceptance
+---
+
+### **v0.9.0 - Polish & Stabilization** (January 2026) [PLANNED]
+
+**Goal**: Final polish before v1.0.0 LTS release
+
+**Planned Work**:
+1. **Documentation improvements**
+   - More examples and tutorials
+   - Performance tuning guide
+   - Migration guide from ThreadSanitizer
+
+2. **Edge case fixes**
+   - Any remaining false positive patterns
+   - Improved error messages
+
+3. **Performance profiling**
+   - Benchmark against ThreadSanitizer
+   - Memory usage optimization
+
+4. **Community feedback integration**
+   - Address reported issues
+   - Feature requests evaluation
+
+**Target**: January 2026
 
 ---
 
@@ -426,5 +452,5 @@ BenchmarkGetGoroutineID_Slow-12    3987 ns/op   64 B/op    1 allocs/op
 
 ---
 
-*Version 1.4 (Updated 2025-12-10)*
-*Current: v0.4.10 (STABLE) | v0.5.0 (IN DEVELOPMENT - Assembly GID) | Next: v0.6.0 (Go Runtime Integration) | Target: v1.0.0 LTS (Q1 2026)*
+*Version 1.5 (Updated 2025-12-19)*
+*Current: v0.8.0 (STABLE - Escape Analysis) | Next: v0.9.0 (Polish) | Target: v1.0.0 LTS (Q1 2026)*
