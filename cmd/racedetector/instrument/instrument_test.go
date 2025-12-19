@@ -1043,3 +1043,86 @@ func main() {
 	t.Logf("Instrumented output:\n%s", result.Code)
 	t.Logf("Stats: reads=%d, writes=%d (must be > 0 for *ptr++)", result.Stats.ReadsInstrumented, result.Stats.WritesInstrumented)
 }
+
+// TestInstrumentFile_SelectorExprIncDec tests that struct field access via IncDecStmt is instrumented.
+// This is the fix for Issue #30: s.x++ was not instrumented because we skip all SelectorExpr.
+// In IncDecStmt context, we KNOW the selector is addressable (otherwise Go won't compile).
+func TestInstrumentFile_SelectorExprIncDec(t *testing.T) {
+	input := `package main
+
+type S struct {
+	x int
+}
+
+func update(s *S) {
+	s.x++
+}
+`
+	result, err := InstrumentFile("test.go", input)
+	if err != nil {
+		t.Fatalf("InstrumentFile failed: %v", err)
+	}
+
+	// Must have instrumentation for s.x++
+	// s.x++ is both READ and WRITE
+	if result.Stats.ReadsInstrumented < 1 {
+		t.Errorf("Stats.ReadsInstrumented = %d, want >= 1 for s.x++", result.Stats.ReadsInstrumented)
+	}
+	if result.Stats.WritesInstrumented < 1 {
+		t.Errorf("Stats.WritesInstrumented = %d, want >= 1 for s.x++", result.Stats.WritesInstrumented)
+	}
+
+	// Verify the instrumented code contains race calls for the field
+	if !strings.Contains(result.Code, "race.RaceRead") {
+		t.Error("Instrumented code missing race.RaceRead for s.x++")
+	}
+	if !strings.Contains(result.Code, "race.RaceWrite") {
+		t.Error("Instrumented code missing race.RaceWrite for s.x++")
+	}
+
+	t.Logf("Instrumented output:\n%s", result.Code)
+	t.Logf("Stats: reads=%d, writes=%d", result.Stats.ReadsInstrumented, result.Stats.WritesInstrumented)
+}
+
+// TestInstrumentFile_SelectorExprInGoroutine tests @thepudds Issue #30 reproduction case.
+func TestInstrumentFile_SelectorExprInGoroutine(t *testing.T) {
+	input := `package main
+
+import "sync"
+
+type S struct {
+	x int
+}
+
+func update(s *S) {
+	s.x++
+}
+
+func main() {
+	var shared S
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		update(&shared)
+	}()
+	go func() {
+		defer wg.Done()
+		update(&shared)
+	}()
+	wg.Wait()
+}
+`
+	result, err := InstrumentFile("test.go", input)
+	if err != nil {
+		t.Fatalf("InstrumentFile failed: %v", err)
+	}
+
+	// Critical: s.x++ must be instrumented
+	if result.Stats.ReadsInstrumented == 0 && result.Stats.WritesInstrumented == 0 {
+		t.Fatalf("CRITICAL: No instrumentation for s.x++! Issue #30 not fixed.")
+	}
+
+	t.Logf("Instrumented output:\n%s", result.Code)
+	t.Logf("Stats: reads=%d, writes=%d", result.Stats.ReadsInstrumented, result.Stats.WritesInstrumented)
+}
