@@ -49,6 +49,8 @@ func main() {
 		runCommand(os.Args[2:])
 	case "test":
 		testCommand(os.Args[2:])
+	case "toolexec":
+		toolexecCommand(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Printf("racedetector version %s\n", version)
 		fmt.Printf("  commit: %s\n", commit)
@@ -72,6 +74,7 @@ COMMANDS:
     build      Build Go program with race detection
     run        Run Go program with race detection
     test       Test Go packages with race detection
+    toolexec   Toolexec wrapper for go build -toolexec integration
     version    Show version information
     help       Show this help message
 
@@ -87,6 +90,9 @@ EXAMPLES:
 
     # Test with coverage
     racedetector test -cover ./internal/...
+
+    # Use with standard go build (toolexec mode)
+    go build -toolexec="racedetector toolexec" ./...
 
 ABOUT:
     racedetector is a standalone tool that provides race detection for Go

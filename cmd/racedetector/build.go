@@ -328,10 +328,29 @@ func instrumentSources(config *buildConfig, workspace *workspace) error {
 		workspace.originalSourceDir = config.workDir
 	}
 
+	// v0.8.0: Get escape analysis from Go compiler for more accurate detection
+	// This allows us to skip instrumentation of stack-local variables that don't escape to heap.
+	var escapeInfo *instrument.EscapeInfo
+	escapeInfo, err = instrument.GetEscapeInfoForFiles(goFiles)
+	if err != nil {
+		// Escape analysis is optional - continue without it if it fails
+		// This may happen on syntax errors or incomplete packages
+		if config.verbose {
+			fmt.Printf("Warning: escape analysis unavailable: %v\n", err)
+		}
+		escapeInfo = nil
+	} else if config.verbose && escapeInfo != nil {
+		fmt.Printf("Escape analysis: found %d escaping locations\n", len(escapeInfo.Escapes)/2) // /2 because we store both line:col and line
+	}
+
 	// Instrument each file
 	for _, srcPath := range goFiles {
-		// Instrument the file
-		result, err := instrument.InstrumentFile(srcPath, nil)
+		// v0.8.0: Instrument with escape analysis info
+		opts := instrument.InstrumentOptions{
+			EscapeInfo: escapeInfo,
+			Filename:   filepath.Base(srcPath),
+		}
+		result, err := instrument.InstrumentFileWithOptions(srcPath, nil, opts)
 		if err != nil {
 			return fmt.Errorf("failed to instrument %s: %w", srcPath, err)
 		}
@@ -367,13 +386,17 @@ func instrumentSources(config *buildConfig, workspace *workspace) error {
 			stats := result.Stats
 			fmt.Printf("  - %d writes, %d reads instrumented\n", stats.WritesInstrumented, stats.ReadsInstrumented)
 			if stats.TotalSkipped() > 0 {
-				fmt.Printf("  - %d items skipped (%d constants, %d built-ins, %d literals, %d blanks)\n",
+				fmt.Printf("  - %d items skipped (%d constants, %d built-ins, %d literals, %d blanks",
 					stats.TotalSkipped(),
 					stats.ConstantsSkipped,
 					stats.BuiltinsSkipped,
 					stats.LiteralsSkipped,
 					stats.BlanksSkipped,
 				)
+				if stats.EscapeSkipped > 0 {
+					fmt.Printf(", %d stack-local via escape analysis", stats.EscapeSkipped)
+				}
+				fmt.Println(")")
 			}
 		}
 	}
