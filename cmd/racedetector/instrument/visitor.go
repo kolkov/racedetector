@@ -633,11 +633,25 @@ func (v *instrumentVisitor) extractReads(expr ast.Expr, stmt ast.Stmt) {
 		case *ast.CallExpr:
 			// Function call or type conversion: func(args) or Type(expr)
 			// Skip Fun (could be function, method, or type - none are addressable)
-			// Only walk into Args
-			for _, arg := range e.Args {
-				v.extractReads(arg, stmt)
+			// For make/new, first arg is a type - skip it; only process remaining args
+			if ident, ok := e.Fun.(*ast.Ident); ok && (ident.Name == "make" || ident.Name == "new") {
+				// make(Type, size) or new(Type) - skip first arg (type), process rest
+				for i := 1; i < len(e.Args); i++ {
+					v.extractReads(e.Args[i], stmt)
+				}
+			} else {
+				// Regular function call - process all args
+				for _, arg := range e.Args {
+					v.extractReads(arg, stmt)
+				}
 			}
 			return false // Don't continue walking - we handled it
+
+		// Type expressions - skip entirely (types are not addressable)
+		case *ast.ArrayType, *ast.MapType, *ast.ChanType, *ast.StructType,
+			*ast.InterfaceType, *ast.FuncType, *ast.Ellipsis:
+			// These are type definitions, not value expressions
+			return false
 
 		case *ast.IndexListExpr:
 			// Generic instantiation: Func[T, U](args)

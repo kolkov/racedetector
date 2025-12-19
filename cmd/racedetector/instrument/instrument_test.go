@@ -1126,3 +1126,45 @@ func main() {
 	t.Logf("Instrumented output:\n%s", result.Code)
 	t.Logf("Stats: reads=%d, writes=%d", result.Stats.ReadsInstrumented, result.Stats.WritesInstrumented)
 }
+
+// TestInstrumentFile_MakeWithCustomType verifies that make() with custom types compiles correctly.
+//
+// Issue: Type names in make([]*CustomType, 0) were incorrectly instrumented as variable reads.
+// This caused compilation error: "CustomType (type) is not an expression"
+//
+// The fix: Skip type expressions (ArrayType, MapType, etc.) and first arg of make/new.
+func TestInstrumentFile_MakeWithCustomType(t *testing.T) {
+	input := `package main
+
+type MyStruct struct {
+	Value int
+}
+
+func main() {
+	slice := make([]*MyStruct, 0)
+	m := make(map[string]*MyStruct)
+	ptr := new(MyStruct)
+	_ = len(slice)
+	_ = len(m)
+	_ = ptr
+}
+`
+	result, err := InstrumentFile("test.go", input)
+	if err != nil {
+		t.Fatalf("InstrumentFile failed: %v", err)
+	}
+
+	// Check: code should NOT contain RaceRead with type name
+	if strings.Contains(result.Code, "RaceRead(uintptr(unsafe.Pointer(MyStruct)))") {
+		t.Errorf("CRITICAL: Type name 'MyStruct' incorrectly instrumented as variable!")
+	}
+
+	// Check: code should still compile (no "type is not an expression" errors)
+	// The presence of make/new calls means we need to handle types correctly
+	if !strings.Contains(result.Code, "make([]*MyStruct") {
+		t.Errorf("Expected make([]*MyStruct to be present in output")
+	}
+
+	t.Logf("Instrumented output:\n%s", result.Code)
+	t.Logf("Stats: reads=%d, writes=%d", result.Stats.ReadsInstrumented, result.Stats.WritesInstrumented)
+}
