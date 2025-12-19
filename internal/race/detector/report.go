@@ -217,15 +217,34 @@ func formatStackTrace(pcs []uintptr) string {
 }
 
 // isInternalStackFrame returns true if the function should be filtered from stack traces.
+//
+// v0.7.2: Expanded filter to cover ALL racedetector internal functions.
+// This fixes Issue #17 where internal frames (reportRaceV2, raceread, RaceRead, etc.)
+// were appearing in stack traces instead of user code.
 func isInternalStackFrame(funcName string) bool {
-	return strings.HasPrefix(funcName, "runtime.") ||
-		strings.HasPrefix(funcName, "internal/") ||
-		strings.Contains(funcName, "/race/detector.(*Detector).OnWrite") ||
-		strings.Contains(funcName, "/race/detector.(*Detector).OnRead") ||
-		strings.Contains(funcName, "/race/detector.(*Detector).OnAcquire") ||
-		strings.Contains(funcName, "/race/detector.(*Detector).OnRelease") ||
-		strings.Contains(funcName, "/race/detector.(*Detector).OnChannel") ||
-		strings.Contains(funcName, "/race/detector.(*Detector).OnWaitGroup")
+	// Filter Go runtime internals
+	if strings.HasPrefix(funcName, "runtime.") {
+		return true
+	}
+
+	// Don't filter test functions (they contain "Test" or "_test")
+	// This ensures test stack traces show the test function name
+	if strings.Contains(funcName, ".Test") || strings.Contains(funcName, "_test.") {
+		return false
+	}
+
+	// Filter ALL racedetector internal packages
+	// This catches: internal/race/api, internal/race/detector, etc.
+	if strings.Contains(funcName, "kolkov/racedetector/internal/") {
+		return true
+	}
+
+	// Filter public race package (race.RaceRead, race.RaceWrite, etc.)
+	if strings.Contains(funcName, "kolkov/racedetector/race.") {
+		return true
+	}
+
+	return false
 }
 
 // writeFrameToBuffer writes a formatted stack frame to the buffer.
