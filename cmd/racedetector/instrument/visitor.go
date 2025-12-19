@@ -336,13 +336,20 @@ func (v *instrumentVisitor) Visit(node ast.Node) ast.Visitor {
 		v.visitIncDec(n)
 
 	case *ast.UnaryExpr:
-		// Dereference: *ptr
+		// Dereference: *ptr (in some contexts)
 		// Can be either read or write depending on context.
 		// For MVP, we'll instrument as READ (simpler).
 		// Future: Context-aware detection (read vs write).
 		if n.Op == token.MUL {
 			v.visitDereference(n)
 		}
+
+	case *ast.StarExpr:
+		// Pointer dereference: *ptr
+		// Go parser uses StarExpr for pointer dereference in most contexts
+		// (e.g., *ptr++ becomes IncDecStmt with X = StarExpr)
+		// v0.8.2: Fix for Issue #27 - must instrument pointer dereferences
+		v.visitStarExpr(n)
 
 	case *ast.IndexExpr:
 		// Array/slice access: arr[0], slice[i]
@@ -573,7 +580,7 @@ func (v *instrumentVisitor) extractReads(expr ast.Expr, stmt ast.Stmt) {
 
 		case *ast.UnaryExpr:
 			if e.Op == token.MUL {
-				// Pointer dereference: *ptr
+				// Pointer dereference: *ptr (UnaryExpr form)
 				if !shouldInstrument(e) {
 					v.trackSkipped(e)
 					return true
@@ -586,6 +593,17 @@ func (v *instrumentVisitor) extractReads(expr ast.Expr, stmt ast.Stmt) {
 				})
 				v.stats.ReadsInstrumented++
 			}
+
+		case *ast.StarExpr:
+			// Pointer dereference: *ptr (StarExpr form)
+			// v0.8.2: Fix for Issue #27 - always instrument pointer dereferences
+			addr := e.X // ptr itself is the address
+			v.instrumentationPoints = append(v.instrumentationPoints, InstrumentPoint{
+				Node:       stmt,
+				AccessType: AccessRead,
+				Addr:       addr,
+			})
+			v.stats.ReadsInstrumented++
 
 		case *ast.KeyValueExpr:
 			// Struct literal field: Point{X: 1, Y: 2}
@@ -913,7 +931,7 @@ func isLiteral(expr ast.Expr) bool {
 	return false
 }
 
-// visitDereference handles pointer dereferences: *ptr.
+// visitDereference handles pointer dereferences: *ptr (UnaryExpr form).
 //
 // Dereferences can be either reads or writes depending on context:
 //
@@ -939,6 +957,39 @@ func (v *instrumentVisitor) visitDereference(expr *ast.UnaryExpr) {
 		AccessType: AccessRead,
 		Addr:       addr,
 	})
+}
+
+// visitStarExpr handles pointer dereferences: *ptr (StarExpr form).
+//
+// Go parser uses StarExpr for pointer dereference in most contexts,
+// especially in statements like *ptr++ (IncDecStmt with X = StarExpr).
+//
+// v0.8.2: Fix for Issue #27 - pointer dereferences must always be instrumented
+// regardless of whether the pointer variable itself escapes to heap.
+// The memory being accessed through the pointer CAN be shared.
+//
+// Example:
+//
+//	func update(ptr *int) {  // ptr doesn't escape (stack-local copy)
+//	    *ptr++               // But *ptr accesses potentially shared memory!
+//	}
+//
+// Parameters:
+//   - expr: Star expression node (pointer dereference)
+func (v *instrumentVisitor) visitStarExpr(expr *ast.StarExpr) {
+	// The operand of * is the pointer being dereferenced.
+	// Example: *ptr → operand is ptr
+	addr := expr.X
+
+	// Record instrumentation point.
+	// Pointer dereferences MUST be instrumented - the memory they access
+	// can be shared even if the pointer variable itself is stack-local.
+	v.instrumentationPoints = append(v.instrumentationPoints, InstrumentPoint{
+		Node:       expr,
+		AccessType: AccessRead,
+		Addr:       addr,
+	})
+	v.stats.ReadsInstrumented++
 }
 
 // visitIndexAccess handles array/slice accesses: arr[0], slice[i].
@@ -1018,10 +1069,16 @@ func (v *instrumentVisitor) extractAddress(expr ast.Expr) ast.Expr {
 
 	case *ast.UnaryExpr:
 		if e.Op == token.MUL {
-			// Dereference: *ptr
+			// Dereference: *ptr (UnaryExpr form)
 			// Address is ptr itself
 			return e.X
 		}
+
+	case *ast.StarExpr:
+		// Dereference: *ptr (StarExpr form)
+		// v0.8.2: Fix for Issue #27
+		// Address is ptr itself
+		return e.X
 
 	case *ast.IndexExpr:
 		// Array access: arr[0]
