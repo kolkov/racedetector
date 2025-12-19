@@ -3,7 +3,7 @@
 > **Strategic Advantage**: Proven FastTrack algorithm implementation without CGO dependency!
 > **Approach**: Scientific algorithm + Go best practices - eliminates C++ ThreadSanitizer dependency
 
-**Last Updated**: 2025-12-19 | **Current Version**: v0.8.0 (STABLE) | **Strategy**: MVP → Optimization + Hardening → Advanced Optimizations → Assembly GID → Test Suite → Escape Analysis → Runtime Integration → Go Proposal | **Milestone**: v0.8.0 (Escape Analysis) → v0.9.0 (Polish) → v1.0.0 (Q1 2026)
+**Last Updated**: 2025-12-19 | **Current Version**: v0.8.3 (STABLE) | **Strategy**: MVP → Optimization + Hardening → Advanced Optimizations → Assembly GID → Test Suite → Escape Analysis → Community Bug Fixes → Runtime Integration → Go Proposal | **Milestone**: v0.8.3 (Bug Fixes) → v0.9.0 (Polish) → v1.0.0 (Q1 2026)
 
 ---
 
@@ -58,6 +58,12 @@ v0.7.0-v0.7.2 (Stack Traces & Hotfixes) ✅ RELEASED 2025-12-18/19
          ↓ (Performance optimizations, false positive fixes)
 v0.8.0 (Escape Analysis) ✅ RELEASED 2025-12-19
          ↓ (30-50% fewer false positives, toolexec command!)
+v0.8.1 (Escape Analysis Fixes) ✅ RELEASED 2025-12-19
+         ↓ (Minor fixes, path normalization)
+v0.8.2 (Issue #27: *ptr++ fix) ✅ RELEASED 2025-12-19
+         ↓ (Pointer dereference instrumentation, by @thepudds)
+v0.8.3 (Issue #30: s.x++ fix) ✅ RELEASED 2025-12-19
+         ↓ (Struct field access instrumentation, by @thepudds)
 v0.9.0 (Polish & Stabilization) → Final polish before v1.0
          ↓ (1-2 weeks)
 v1.0.0 LTS → Production-ready with Go community adoption (Q1 2026)
@@ -152,11 +158,11 @@ v1.0.0 LTS → Production-ready with Go community adoption (Q1 2026)
 
 ---
 
-## 📊 Current Status (v0.8.0 Stable)
+## 📊 Current Status (v0.8.3 Stable)
 
-**Phase**: ✅ Escape Analysis Integration Complete!
-**Detector**: Production-grade with 30-50% fewer false positives! ⚡
-**AST Instrumentation**: Complete with escape analysis! ✅
+**Phase**: ✅ Community Bug Fixes Complete!
+**Detector**: Production-grade with critical bug fixes from @thepudds! ⚡
+**AST Instrumentation**: Complete with escape analysis and struct field support! ✅
 
 **What Works**:
 - ✅ `racedetector build` command (drop-in for `go build`)
@@ -244,6 +250,64 @@ Previous Write at 0xc00000a0b8 by goroutine 3:
 - lexer.go: 14 writes/35 reads → 9 writes/18 reads (36%/49% reduction)
 - Named return value false positives: eliminated
 - Function parameter false positives: eliminated
+
+---
+
+### **v0.8.2 - Pointer Dereference Fix** (December 2025) [RELEASED! ✅]
+
+**Goal**: Fix Issue #27 - pointer dereferences like `*ptr++` not instrumented
+
+**Duration**: Same day (December 19, 2025)
+
+**Status**: ✅ RELEASED
+
+**Root Cause**: Go parser uses `*ast.StarExpr` for pointer dereference in `IncDecStmt`, but we only checked `*ast.UnaryExpr`.
+
+**Changes**:
+- ✅ Added `*ast.StarExpr` handling in `Visit()` switch
+- ✅ Added `visitStarExpr()` for pointer dereference instrumentation
+- ✅ Added `StarExpr` handling in `extractReads()` and `extractAddress()`
+- ✅ Test cases for Issue #27 reproduction
+
+**Credit**: Thanks to @thepudds for finding this critical bug!
+
+---
+
+### **v0.8.3 - Struct Field Access Fix** (December 2025) [RELEASED! ✅]
+
+**Goal**: Fix Issue #30 - struct field access like `s.x++` not instrumented
+
+**Duration**: Same day (December 19, 2025)
+
+**Status**: ✅ RELEASED
+
+**Root Cause**: `visitSelectorInModifyContext()` recorded `Node: expr` (SelectorExpr), but `findParentStatement()` returned outermost statement (BlockStmt) instead of IncDecStmt.
+
+**Changes**:
+- ✅ Modified `visitSelectorInModifyContext(parentStmt, expr)` to accept parent statement
+- ✅ Use parent statement as `Node` for correct instrumentation lookup
+- ✅ Added `TestInstrumentFile_SelectorExprIncDec` test
+- ✅ Added `TestInstrumentFile_SelectorExprInGoroutine` test
+
+**Before fix**:
+```go
+func update(s *S) {
+    s.x++  // No race detection!
+}
+```
+
+**After fix**:
+```go
+func update(s *S) {
+    race.RaceRead(uintptr(unsafe.Pointer(&s.x)))
+    race.RaceWrite(uintptr(unsafe.Pointer(&s.x)))
+    s.x++
+}
+```
+
+**Known Limitation**: Compiler directives (`//go:noinline`) may be misplaced during instrumentation. See Issue #31.
+
+**Credit**: Thanks to @thepudds for finding this critical bug!
 
 ---
 
@@ -452,5 +516,5 @@ Previous Write at 0xc00000a0b8 by goroutine 3:
 
 ---
 
-*Version 1.5 (Updated 2025-12-19)*
-*Current: v0.8.0 (STABLE - Escape Analysis) | Next: v0.9.0 (Polish) | Target: v1.0.0 LTS (Q1 2026)*
+*Version 1.6 (Updated 2025-12-19)*
+*Current: v0.8.3 (STABLE - Community Bug Fixes) | Next: v0.9.0 (Polish) | Target: v1.0.0 LTS (Q1 2026)*
