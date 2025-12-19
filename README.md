@@ -188,11 +188,22 @@ Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ---
 
+## Maintainers
+
+- **[@kolkov](https://github.com/kolkov)** - Creator & Lead Maintainer
+
+---
+
 ## Acknowledgments
 
+**Research:**
 - **Cormac Flanagan & Stephen Freund** - FastTrack algorithm (PLDI 2009)
 - **Dmitry Vyukov** - ThreadSanitizer and Go race detector integration
 - **Go Team** - Original race detector implementation
+
+**Community Contributors:**
+- **[@thepudds](https://github.com/thepudds)** - Critical bug report: pointer dereference instrumentation ([#27](https://github.com/kolkov/racedetector/issues/27))
+- **[@glycerine](https://github.com/glycerine)** - Extensive real-world testing on [zygomys](https://github.com/glycerine/zygomys) ([#15](https://github.com/kolkov/racedetector/issues/15), [#16](https://github.com/kolkov/racedetector/issues/16), [#17](https://github.com/kolkov/racedetector/issues/17))
 
 ---
 
