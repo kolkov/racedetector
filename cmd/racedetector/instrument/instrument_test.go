@@ -945,3 +945,101 @@ func main() {
 		t.Error("Regular Go file should have non-empty Code")
 	}
 }
+
+// TestInstrumentFile_StarExprPointerDeref tests instrumentation of pointer dereferences
+// using StarExpr AST node (not UnaryExpr with MUL).
+//
+// Issue #27: Pointer dereferences were not being instrumented because Go parser
+// uses *ast.StarExpr for pointer dereference in contexts like *ptr++ (IncDecStmt),
+// but our code only checked for *ast.UnaryExpr with token.MUL.
+//
+// This is the exact case reported by @thepudds in golang/go#6508.
+//
+// Test Case:
+//
+//	func update(ptr *int) {  // ptr doesn't escape (stack-local copy)
+//	    *ptr++               // But *ptr accesses shared memory - MUST instrument!
+//	}
+//
+// Expected:
+//   - Instrument *ptr++ even though ptr parameter "does not escape"
+//   - The memory accessed via *ptr CAN be shared between goroutines
+func TestInstrumentFile_StarExprPointerDeref(t *testing.T) {
+	input := `package main
+
+func update(ptr *int) {
+	*ptr++
+}
+
+func main() {
+	var x int
+	update(&x)
+}
+`
+
+	result, err := InstrumentFile("test.go", input)
+	if err != nil {
+		t.Fatalf("InstrumentFile failed: %v", err)
+	}
+
+	// Must have instrumentation for *ptr++
+	// *ptr++ is both a read and a write
+	if result.Stats.ReadsInstrumented < 1 {
+		t.Errorf("Stats.ReadsInstrumented = %d, want >= 1 (for *ptr read)", result.Stats.ReadsInstrumented)
+	}
+
+	// Verify RaceRead call is present for *ptr
+	if !strings.Contains(result.Code, "race.RaceRead") {
+		t.Errorf("Output missing RaceRead for *ptr dereference")
+	}
+
+	t.Logf("Instrumented output:\n%s", result.Code)
+	t.Logf("Stats: reads=%d, writes=%d", result.Stats.ReadsInstrumented, result.Stats.WritesInstrumented)
+}
+
+// TestInstrumentFile_StarExprInGoroutine tests the full race scenario from @thepudds.
+//
+// This is the exact reproduction case from Issue #27 / golang/go#6508:
+// Two goroutines calling update(&shared) where update does *ptr++.
+//
+// Before fix: 0 reads, 0 writes (race missed!)
+// After fix: >= 1 read for *ptr dereference
+func TestInstrumentFile_StarExprInGoroutine(t *testing.T) {
+	input := `package main
+
+import "sync"
+
+func update(ptr *int) {
+	*ptr++
+}
+
+func main() {
+	var shared int
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		update(&shared)
+	}()
+	go func() {
+		defer wg.Done()
+		update(&shared)
+	}()
+	wg.Wait()
+}
+`
+
+	result, err := InstrumentFile("test.go", input)
+	if err != nil {
+		t.Fatalf("InstrumentFile failed: %v", err)
+	}
+
+	// Critical assertion: *ptr++ MUST be instrumented
+	// If ReadsInstrumented is 0, we're missing the pointer dereference race!
+	if result.Stats.ReadsInstrumented == 0 {
+		t.Fatalf("CRITICAL: ReadsInstrumented = 0, pointer dereference not instrumented! Issue #27 not fixed.")
+	}
+
+	t.Logf("Instrumented output:\n%s", result.Code)
+	t.Logf("Stats: reads=%d, writes=%d (must be > 0 for *ptr++)", result.Stats.ReadsInstrumented, result.Stats.WritesInstrumented)
+}

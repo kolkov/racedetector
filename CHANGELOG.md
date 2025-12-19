@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] - 2025-12-19
+
+### Fixed
+
+**Issue #27: Pointer Dereferences Not Instrumented**
+
+Critical bug found by @thepudds (Go Team member) where pointer dereferences like `*ptr++` were not being instrumented:
+
+```go
+func update(ptr *int) {  // ptr doesn't escape (correct)
+    *ptr++               // BUT *ptr accesses potentially shared memory!
+}
+```
+
+**Root cause:** Go parser uses `*ast.StarExpr` for pointer dereference in `IncDecStmt` (e.g., `*ptr++` parses as `IncDecStmt` with `X = StarExpr`), but our code only checked `*ast.UnaryExpr`.
+
+**Changes:**
+- Added `*ast.StarExpr` handling in `Visit()` switch statement
+- Added `visitStarExpr()` function for pointer dereference instrumentation
+- Added `StarExpr` handling in `extractReads()` and `extractAddress()`
+- Added test cases for Issue #27 reproduction
+
+**Before fix:** `0 writes, 0 reads instrumented` for `*ptr++`
+**After fix:** Race correctly detected in @thepudds example
+
+### Acknowledgments
+
+Thanks to @thepudds for finding this critical bug and providing the reproduction case.
+
+---
+
 ## [0.8.1] - 2025-12-19
 
 ### Added
