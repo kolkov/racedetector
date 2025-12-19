@@ -24,6 +24,7 @@ Thumbs.db
 # Build artifacts
 /bin/
 /dist/
+cmd/racedetector/main
 
 # Test coverage
 *.coverprofile
