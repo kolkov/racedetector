@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.3] - 2025-12-19
+
+### Fixed
+
+**Issue #30: Struct Field Access via IncDecStmt Not Instrumented**
+
+Critical bug found by @thepudds where struct field access like `s.x++` was not being instrumented:
+
+```go
+func update(s *S) {
+    s.x++  // This was NOT instrumented!
+}
+```
+
+**Root cause:** In `visitSelectorInModifyContext()`, we recorded `Node: expr` (SelectorExpr), but `findParentStatement()` then returned the outermost containing statement (BlockStmt) instead of the IncDecStmt. This caused the instrumentation lookup to fail.
+
+**Changes:**
+- Modified `visitSelectorInModifyContext()` to accept parent statement parameter
+- Use parent statement as `Node` so `findParentStatement()` returns correct statement
+- Added `TestInstrumentFile_SelectorExprIncDec` test case
+- Added `TestInstrumentFile_SelectorExprInGoroutine` for full reproduction
+
+**Before fix:**
+```go
+func update(s *S) {
+    s.x++  // No race detection!
+}
+```
+
+**After fix:**
+```go
+func update(s *S) {
+    race.RaceRead(uintptr(unsafe.Pointer(&s.x)))
+    race.RaceWrite(uintptr(unsafe.Pointer(&s.x)))
+    s.x++
+}
+```
+
+### Known Limitations
+
+**Compiler Directives May Be Misplaced**
+
+When instrumenting files with compiler directives like `//go:noinline`, the directive may be incorrectly moved to the import block. This is a bug in the import injection code that will be addressed in a future release. See Issue #31.
+
+### Acknowledgments
+
+Thanks to @thepudds for finding this critical bug and providing the reproduction case in Issue #27 comments.
+
+---
+
 ## [0.8.2] - 2025-12-19
 
 ### Fixed
