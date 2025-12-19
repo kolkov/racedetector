@@ -89,6 +89,14 @@ type instrumentVisitor struct {
 	// stats tracks instrumentation statistics.
 	// Exported via GetStats() for reporting.
 	stats InstrumentStats
+
+	// currentFunc tracks the current function declaration for context-aware filtering.
+	// v0.7.2: Used to skip named return values and function parameters (stack-local).
+	currentFunc *ast.FuncDecl
+
+	// currentFuncLit tracks the current function literal (closure) for context-aware filtering.
+	// v0.7.2: Used to skip named return values and function parameters in closures.
+	currentFuncLit *ast.FuncLit
 }
 
 // InstrumentPoint represents a location where race detection should be inserted.
@@ -121,6 +129,89 @@ const (
 
 // instrumentPoint is the internal type (lowercase for private use).
 type instrumentPoint = InstrumentPoint
+
+// isNamedReturn checks if the identifier is a named return value.
+// v0.7.2: Named return values are stack-local and cannot have data races.
+//
+// Example:
+//
+//	func foo() (result int, err error) {
+//	    result = 42  // result is a named return value - skip instrumentation
+//	    return
+//	}
+func (v *instrumentVisitor) isNamedReturn(ident *ast.Ident) bool {
+	// Check current function declaration
+	if v.currentFunc != nil && v.currentFunc.Type.Results != nil {
+		for _, field := range v.currentFunc.Type.Results.List {
+			for _, name := range field.Names {
+				if name.Name == ident.Name {
+					return true
+				}
+			}
+		}
+	}
+
+	// Check current function literal (closure)
+	if v.currentFuncLit != nil && v.currentFuncLit.Type.Results != nil {
+		for _, field := range v.currentFuncLit.Type.Results.List {
+			for _, name := range field.Names {
+				if name.Name == ident.Name {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// isParameter checks if the identifier is a function parameter.
+// v0.7.2: Function parameters (pass-by-value) are stack-local copies
+// and cannot have data races with other goroutines.
+//
+// Example:
+//
+//	func process(x int) {
+//	    x = x + 1  // x is a parameter copy - skip instrumentation
+//	}
+func (v *instrumentVisitor) isParameter(ident *ast.Ident) bool {
+	// Check current function declaration
+	if v.currentFunc != nil && v.currentFunc.Type.Params != nil {
+		for _, field := range v.currentFunc.Type.Params.List {
+			for _, name := range field.Names {
+				if name.Name == ident.Name {
+					return true
+				}
+			}
+		}
+	}
+
+	// Check current function literal (closure)
+	if v.currentFuncLit != nil && v.currentFuncLit.Type.Params != nil {
+		for _, field := range v.currentFuncLit.Type.Params.List {
+			for _, name := range field.Names {
+				if name.Name == ident.Name {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// isStackLocal checks if the identifier is known to be stack-local.
+// v0.7.2: Stack-local variables cannot have data races because each
+// goroutine has its own stack.
+//
+// Currently detected stack-local patterns:
+// - Named return values (result in `func() (result int)`)
+// - Function parameters (x in `func(x int)`)
+//
+// Future: Add detection for loop variables and short-lived locals.
+func (v *instrumentVisitor) isStackLocal(ident *ast.Ident) bool {
+	return v.isNamedReturn(ident) || v.isParameter(ident)
+}
 
 // Visit implements ast.Visitor interface.
 //
@@ -160,6 +251,24 @@ func (v *instrumentVisitor) Visit(node ast.Node) ast.Visitor {
 	}
 
 	switch n := node.(type) {
+	case *ast.FuncDecl:
+		// Track current function for context-aware filtering.
+		// v0.7.2: Used to skip named return values and parameters (stack-local).
+		prevFunc := v.currentFunc
+		v.currentFunc = n
+		ast.Walk(v, n.Body)
+		v.currentFunc = prevFunc
+		return nil // Already walked the body
+
+	case *ast.FuncLit:
+		// Track current function literal (closure) for context-aware filtering.
+		// v0.7.2: Used to skip named return values and parameters in closures.
+		prevFuncLit := v.currentFuncLit
+		v.currentFuncLit = n
+		ast.Walk(v, n.Body)
+		v.currentFuncLit = prevFuncLit
+		return nil // Already walked the body
+
 	case *ast.AssignStmt:
 		// Assignment: x = 42, *ptr = 42, arr[0] = 42
 		// These are WRITE operations on the left-hand side.
@@ -241,6 +350,15 @@ func (v *instrumentVisitor) visitAssignment(stmt *ast.AssignStmt) {
 
 	// For regular assignment (=), instrument LHS writes
 	for _, lhs := range stmt.Lhs {
+		// v0.7.2: Skip stack-local variables (named returns, parameters)
+		// These cannot have data races as each goroutine has its own stack.
+		if ident, ok := lhs.(*ast.Ident); ok {
+			if v.isStackLocal(ident) {
+				v.stats.ConstantsSkipped++ // Reuse counter for skipped items
+				continue
+			}
+		}
+
 		// Skip if this expression shouldn't be instrumented
 		if !shouldInstrument(lhs) {
 			v.trackSkipped(lhs)
@@ -338,6 +456,10 @@ func (v *instrumentVisitor) extractReads(expr ast.Expr, stmt ast.Stmt) {
 		switch e := n.(type) {
 		case *ast.Ident:
 			// Simple variable read: counter
+			// v0.7.2: Skip stack-local variables (named returns, parameters)
+			if v.isStackLocal(e) {
+				return true // Skip but continue walking
+			}
 			// Skip if this expression shouldn't be instrumented
 			if !shouldInstrument(e) {
 				v.trackSkipped(e)

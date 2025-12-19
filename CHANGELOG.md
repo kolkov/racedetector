@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2025-12-19
+
+### Fixed
+
+**Stack Trace Display (Issue #17)**
+
+- Expanded `isInternalStackFrame()` filter to cover all racedetector packages
+- Updated `captureCallerPC()` to skip 6 frames for accurate user code PC
+- Test functions are now correctly shown in stack traces
+
+**False Positives on Stack-Local Variables (Issue #20)**
+
+- Skip instrumentation of named return values (stack-local)
+- Skip instrumentation of function parameters (pass-by-value copies)
+- Added `isStackLocal()` check in instrumentor
+- Phase 2 tasks: #21 (loop vars), #22 (short decl), #23 (go/types)
+
+---
+
 ## [0.7.1] - 2025-12-18
 
 ### Fixed
