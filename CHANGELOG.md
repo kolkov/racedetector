@@ -47,7 +47,7 @@ func update(s *S) {
 
 **Compiler Directives May Be Misplaced**
 
-When instrumenting files with compiler directives like `//go:noinline`, the directive may be incorrectly moved to the import block. This is a bug in the import injection code that will be addressed in a future release. See Issue #31.
+When instrumenting files with compiler directives like `//go:noinline`, the directive may be incorrectly moved to the import block. This is a bug in the import injection code that will be addressed in a future release. See Issue #32.
 
 ### Acknowledgments
 

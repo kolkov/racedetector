@@ -305,7 +305,7 @@ func update(s *S) {
 }
 ```
 
-**Known Limitation**: Compiler directives (`//go:noinline`) may be misplaced during instrumentation. See Issue #31.
+**Known Limitation**: Compiler directives (`//go:noinline`) may be misplaced during instrumentation. See Issue #32.
 
 **Credit**: Thanks to @thepudds for finding this critical bug!
 
