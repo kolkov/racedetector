@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.4] - 2025-12-19
+
+### Fixed
+
+**Issue #33: GetVersion() Missing 'v' Prefix Breaks go.mod**
+
+Release binaries built by GoReleaser returned version without 'v' prefix (e.g., `0.8.3` instead of `v0.8.3`), causing `racedetector test` to fail on external projects with invalid go.mod syntax.
+
+**Changes:**
+- `GetVersion()` now ensures 'v' prefix for non-dev versions
+- `test.go` uses `GetVersion()` instead of raw `Version` variable
+- Added `TestGetVersion_VPrefix` test case
+
+**Issue #34: Type Names in make/new Incorrectly Instrumented**
+
+Code like `make([]*CustomType, 0)` caused compilation errors because type names were incorrectly instrumented as variable reads:
+
+```
+SexpFunction (type) is not an expression
+```
+
+**Changes:**
+- Skip type expression AST nodes (ArrayType, MapType, ChanType, etc.)
+- Special handling for `make`/`new` - skip first argument (always a type)
+- Added `TestInstrumentFile_MakeWithCustomType` test case
+
+Found while testing on [zygomys](https://github.com/glycerine/zygomys) project.
+
 ## [0.8.3] - 2025-12-19
 
 ### Fixed

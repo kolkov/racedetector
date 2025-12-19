@@ -3,7 +3,7 @@
 > **Strategic Advantage**: Proven FastTrack algorithm implementation without CGO dependency!
 > **Approach**: Scientific algorithm + Go best practices - eliminates C++ ThreadSanitizer dependency
 
-**Last Updated**: 2025-12-19 | **Current Version**: v0.8.3 (STABLE) | **Strategy**: MVP → Optimization + Hardening → Advanced Optimizations → Assembly GID → Test Suite → Escape Analysis → Community Bug Fixes → Runtime Integration → Go Proposal | **Milestone**: v0.8.3 (Bug Fixes) → v0.9.0 (Polish) → v1.0.0 (Q1 2026)
+**Last Updated**: 2025-12-19 | **Current Version**: v0.8.4 (STABLE) | **Strategy**: MVP → Optimization + Hardening → Advanced Optimizations → Assembly GID → Test Suite → Escape Analysis → Community Bug Fixes → Runtime Integration → Go Proposal | **Milestone**: v0.8.4 (Bug Fixes) → v0.9.0 (Polish) → v1.0.0 (Q1 2026)
 
 ---
 
@@ -64,6 +64,8 @@ v0.8.2 (Issue #27: *ptr++ fix) ✅ RELEASED 2025-12-19
          ↓ (Pointer dereference instrumentation, by @thepudds)
 v0.8.3 (Issue #30: s.x++ fix) ✅ RELEASED 2025-12-19
          ↓ (Struct field access instrumentation, by @thepudds)
+v0.8.4 (Issues #33, #34) ✅ RELEASED 2025-12-19
+         ↓ (Version prefix fix, type expression fix)
 v0.9.0 (Polish & Stabilization) → Final polish before v1.0
          ↓ (1-2 weeks)
 v1.0.0 LTS → Production-ready with Go community adoption (Q1 2026)

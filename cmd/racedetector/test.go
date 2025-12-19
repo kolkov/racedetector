@@ -301,7 +301,7 @@ func instrumentTestSources(config *testConfig, workspace *workspace) error {
 		if err == nil {
 			// Append racedetector require to the go.mod
 			modContent := string(data)
-			modContent += fmt.Sprintf("\nrequire github.com/kolkov/racedetector %s\n", runtime.Version)
+			modContent += fmt.Sprintf("\nrequire github.com/kolkov/racedetector %s\n", runtime.GetVersion())
 			_ = os.WriteFile(goModDst, []byte(modContent), 0644)
 		}
 	}

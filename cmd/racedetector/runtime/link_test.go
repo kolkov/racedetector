@@ -46,6 +46,35 @@ func TestGetVersion(t *testing.T) {
 	t.Logf("GetVersion() = %q (Version var = %q)", version, Version)
 }
 
+// TestGetVersion_VPrefix verifies that GetVersion adds "v" prefix for go.mod compatibility.
+func TestGetVersion_VPrefix(t *testing.T) {
+	// Save original version
+	originalVersion := Version
+	defer func() { Version = originalVersion }()
+
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"dev mode", "dev", "dev"},
+		{"with v prefix", "v0.8.3", "v0.8.3"},
+		{"without v prefix", "0.8.3", "v0.8.3"},
+		{"with v prefix semver", "v1.0.0", "v1.0.0"},
+		{"without v prefix semver", "1.0.0", "v1.0.0"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			Version = tt.input
+			got := GetVersion()
+			if got != tt.expected {
+				t.Errorf("GetVersion() with Version=%q = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
 // TestGetRuntimeInitCode verifies the initialization code is correct.
 func TestGetRuntimeInitCode(t *testing.T) {
 	code := GetRuntimeInitCode()

@@ -327,5 +327,5 @@ If you encounter issues:
 
 ---
 
-*Last Updated: December 1, 2025*
-*Version: 0.3.2*
+*Last Updated: December 19, 2025*
+*Version: 0.8.4*

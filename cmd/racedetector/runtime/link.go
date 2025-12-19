@@ -22,22 +22,26 @@ import (
 // Set via: -ldflags "-X github.com/kolkov/racedetector/cmd/racedetector/runtime.Version=v0.7.0"
 var Version = "dev"
 
-// GetVersion returns the effective version string.
+// GetVersion returns the effective version string with "v" prefix for go.mod.
 // Priority:
 //  1. ldflags-injected Version (from GoReleaser builds)
 //  2. Build info version (from "go install @version")
 //  3. Default "dev" (for local development)
 func GetVersion() string {
-	if Version != "dev" {
-		return Version
-	}
-	// Fallback: try to get version from build info (go install @version)
-	if info, ok := debug.ReadBuildInfo(); ok {
-		if info.Main.Version != "" && info.Main.Version != "(devel)" {
-			return info.Main.Version
+	version := Version
+	if version == "dev" {
+		// Fallback: try to get version from build info (go install @version)
+		if info, ok := debug.ReadBuildInfo(); ok {
+			if info.Main.Version != "" && info.Main.Version != "(devel)" {
+				version = info.Main.Version
+			}
 		}
 	}
-	return "dev"
+	// Ensure version has "v" prefix for go.mod compatibility
+	if version != "dev" && !strings.HasPrefix(version, "v") {
+		version = "v" + version
+	}
+	return version
 }
 
 // GetRuntimePackagePath returns the import path for the race detector runtime.
