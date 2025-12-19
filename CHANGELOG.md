@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2025-12-19
+
+### Added
+
+**Escape Analysis Integration**
+
+Compiler-derived escape analysis to eliminate false positives on stack-local variables:
+
+- **New `escape.go` parser** - Parses `go build -gcflags="-m"` output
+- **Stack-local variable detection** - Skip instrumentation for variables that don't escape to heap
+- **30-50% reduction in instrumentation** on real codebases
+- Tested on zygomys project (Issue #17):
+  - lexer.go: 14 writes/35 reads → 9 writes/18 reads
+  - Named return value false positives eliminated
+
+**Toolexec Command**
+
+New command for integration with standard `go build`:
+
+```bash
+# Use racedetector as toolexec wrapper
+go build -toolexec="racedetector toolexec" ./...
+```
+
+- Intercepts compile calls to instrument source files
+- Automatically skips standard library and internal packages
+- Supports escape analysis in toolexec mode
+- Useful for complex build systems and IDE integration
+
+### Fixed
+
+- **Issue #17: False positives on named return values** - Variables that don't escape to heap are no longer instrumented
+- Improved path normalization for escape analysis matching (handles absolute vs relative paths)
+
+### Changed
+
+- `InstrumentOptions` now accepts `EscapeInfo` for compiler-derived escape data
+- `InstrumentFileWithOptions()` API for advanced instrumentation control
+
+---
+
 ## [0.7.2] - 2025-12-19
 
 ### Fixed

@@ -56,9 +56,14 @@ racedetector run main.go
 # Test with race detection (replaces: go test -race)
 racedetector test ./...
 racedetector test -v -run TestFoo ./pkg/...
+
+# Toolexec mode (for complex build systems)
+go build -toolexec="racedetector toolexec" ./...
 ```
 
 All standard `go build`, `go run`, and `go test` flags are supported.
+
+**v0.8.0+:** Escape analysis integration reduces false positives by 30-50%.
 
 ---
 

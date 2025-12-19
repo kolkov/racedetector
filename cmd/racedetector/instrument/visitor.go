@@ -22,6 +22,7 @@ import (
 //	  - 15 writes instrumented
 //	  - 23 reads instrumented
 //	  - 5 items skipped (3 constants, 1 built-in, 1 literal)
+//	  - 8 stack-local skipped (escape analysis)
 //	  Total: 38 race detection calls inserted
 //
 // Performance Impact:
@@ -37,6 +38,7 @@ type InstrumentStats struct {
 	BuiltinsSkipped    int  // Number of built-in identifiers skipped (nil, true, false, iota)
 	LiteralsSkipped    int  // Number of literals skipped (42, "hello", 3.14)
 	BlanksSkipped      int  // Number of blank identifiers (_) skipped
+	EscapeSkipped      int  // v0.8.0: Number of stack-local variables skipped (escape analysis)
 	CGOSkipped         bool // True if file was skipped due to CGO (import "C")
 }
 
@@ -47,7 +49,7 @@ func (s *InstrumentStats) Total() int {
 
 // TotalSkipped returns total number of skipped items.
 func (s *InstrumentStats) TotalSkipped() int {
-	return s.ConstantsSkipped + s.BuiltinsSkipped + s.LiteralsSkipped + s.BlanksSkipped
+	return s.ConstantsSkipped + s.BuiltinsSkipped + s.LiteralsSkipped + s.BlanksSkipped + s.EscapeSkipped
 }
 
 // instrumentVisitor implements ast.Visitor for instrumenting memory accesses.
@@ -97,6 +99,15 @@ type instrumentVisitor struct {
 	// currentFuncLit tracks the current function literal (closure) for context-aware filtering.
 	// v0.7.2: Used to skip named return values and function parameters in closures.
 	currentFuncLit *ast.FuncLit
+
+	// escapeInfo holds compiler-derived escape analysis results.
+	// v0.8.0: If a variable doesn't escape to heap, it's stack-local and cannot race.
+	// This is optional - if nil, we skip escape-based filtering.
+	escapeInfo *EscapeInfo
+
+	// filename is the relative filename for escape analysis lookups.
+	// Must match the format in EscapeInfo (e.g., "main.go" not "./main.go").
+	filename string
 }
 
 // InstrumentPoint represents a location where race detection should be inserted.
@@ -200,6 +211,21 @@ func (v *instrumentVisitor) isParameter(ident *ast.Ident) bool {
 	return false
 }
 
+// StackLocalReason indicates why a variable is considered stack-local.
+// v0.8.0: Used for tracking skip reasons in statistics.
+type StackLocalReason int
+
+const (
+	// NotStackLocal indicates the variable may escape and needs instrumentation.
+	NotStackLocal StackLocalReason = iota
+	// StackLocalNamedReturn indicates it's a named return value.
+	StackLocalNamedReturn
+	// StackLocalParameter indicates it's a function parameter.
+	StackLocalParameter
+	// StackLocalEscapeAnalysis indicates escape analysis says it doesn't escape.
+	StackLocalEscapeAnalysis
+)
+
 // isStackLocal checks if the identifier is known to be stack-local.
 // v0.7.2: Stack-local variables cannot have data races because each
 // goroutine has its own stack.
@@ -207,10 +233,39 @@ func (v *instrumentVisitor) isParameter(ident *ast.Ident) bool {
 // Currently detected stack-local patterns:
 // - Named return values (result in `func() (result int)`)
 // - Function parameters (x in `func(x int)`)
+// - v0.8.0: Variables that don't escape to heap (from compiler escape analysis)
 //
 // Future: Add detection for loop variables and short-lived locals.
+//
+//nolint:unused // Reserved for public API - convenience wrapper
 func (v *instrumentVisitor) isStackLocal(ident *ast.Ident) bool {
-	return v.isNamedReturn(ident) || v.isParameter(ident)
+	return v.isStackLocalWithReason(ident) != NotStackLocal
+}
+
+// isStackLocalWithReason checks if the identifier is stack-local and returns the reason.
+// v0.8.0: Added for tracking skip reasons in statistics.
+func (v *instrumentVisitor) isStackLocalWithReason(ident *ast.Ident) StackLocalReason {
+	// Check AST-based patterns first (cheap)
+	if v.isNamedReturn(ident) {
+		return StackLocalNamedReturn
+	}
+	if v.isParameter(ident) {
+		return StackLocalParameter
+	}
+
+	// v0.8.0: Check compiler-derived escape analysis
+	// If escape info is available and variable doesn't escape, it's stack-local
+	if v.escapeInfo != nil && ident.Pos().IsValid() {
+		pos := v.fset.Position(ident.Pos())
+		// If the variable at this location DOES escape, we must instrument it
+		// If it does NOT escape, it's stack-local and we can skip
+		if !v.escapeInfo.DoesEscape(pos.Filename, pos.Line, pos.Column) {
+			// Variable doesn't escape to heap - stack-local, skip instrumentation
+			return StackLocalEscapeAnalysis
+		}
+	}
+
+	return NotStackLocal
 }
 
 // Visit implements ast.Visitor interface.
@@ -350,11 +405,17 @@ func (v *instrumentVisitor) visitAssignment(stmt *ast.AssignStmt) {
 
 	// For regular assignment (=), instrument LHS writes
 	for _, lhs := range stmt.Lhs {
-		// v0.7.2: Skip stack-local variables (named returns, parameters)
+		// v0.7.2+: Skip stack-local variables (named returns, parameters, non-escaping)
 		// These cannot have data races as each goroutine has its own stack.
 		if ident, ok := lhs.(*ast.Ident); ok {
-			if v.isStackLocal(ident) {
-				v.stats.ConstantsSkipped++ // Reuse counter for skipped items
+			reason := v.isStackLocalWithReason(ident)
+			if reason != NotStackLocal {
+				// Track why it was skipped
+				if reason == StackLocalEscapeAnalysis {
+					v.stats.EscapeSkipped++
+				} else {
+					v.stats.ConstantsSkipped++ // Reuse for named returns/params
+				}
 				continue
 			}
 		}
@@ -456,8 +517,13 @@ func (v *instrumentVisitor) extractReads(expr ast.Expr, stmt ast.Stmt) {
 		switch e := n.(type) {
 		case *ast.Ident:
 			// Simple variable read: counter
-			// v0.7.2: Skip stack-local variables (named returns, parameters)
-			if v.isStackLocal(e) {
+			// v0.7.2+: Skip stack-local variables (named returns, parameters, non-escaping)
+			reason := v.isStackLocalWithReason(e)
+			if reason != NotStackLocal {
+				// Track why it was skipped
+				if reason == StackLocalEscapeAnalysis {
+					v.stats.EscapeSkipped++
+				}
 				return true // Skip but continue walking
 			}
 			// Skip if this expression shouldn't be instrumented
@@ -978,6 +1044,26 @@ func (v *instrumentVisitor) extractAddress(expr ast.Expr) ast.Expr {
 	return nil
 }
 
+// InstrumentOptions configures the instrumentation visitor.
+//
+// v0.8.0: Added to support compiler-derived escape analysis for
+// more accurate stack-local variable detection.
+//
+//nolint:revive // Stuttering is intentional for API clarity (instrument.InstrumentOptions)
+type InstrumentOptions struct {
+	// EscapeInfo contains compiler-derived escape analysis results.
+	// If nil, escape-based filtering is disabled (conservative approach).
+	EscapeInfo *EscapeInfo
+
+	// Filename is the relative filename for escape analysis lookups.
+	// Should match the format in EscapeInfo (e.g., "main.go").
+	Filename string
+
+	// EnableCoalescing enables BigFoot coalescing optimization.
+	// Default: false (disabled for safety).
+	EnableCoalescing bool
+}
+
 // newInstrumentVisitor creates a new instrumentVisitor instance.
 //
 // Parameters:
@@ -987,10 +1073,27 @@ func (v *instrumentVisitor) extractAddress(expr ast.Expr) ast.Expr {
 // Returns:
 //   - *instrumentVisitor: New visitor instance
 func newInstrumentVisitor(fset *token.FileSet, file *ast.File) *instrumentVisitor {
+	return newInstrumentVisitorWithOptions(fset, file, InstrumentOptions{})
+}
+
+// newInstrumentVisitorWithOptions creates a new instrumentVisitor with options.
+//
+// v0.8.0: Added to support compiler-derived escape analysis.
+//
+// Parameters:
+//   - fset: File set for source positions
+//   - file: AST file to instrument
+//   - opts: Instrumentation options (escape info, coalescing, etc.)
+//
+// Returns:
+//   - *instrumentVisitor: New visitor instance
+func newInstrumentVisitorWithOptions(fset *token.FileSet, file *ast.File, opts InstrumentOptions) *instrumentVisitor {
 	return &instrumentVisitor{
 		fset:                  fset,
 		file:                  file,
 		instrumentationPoints: make([]instrumentPoint, 0, 100), // Pre-allocate for typical file
+		escapeInfo:            opts.EscapeInfo,
+		filename:              opts.Filename,
 	}
 }
 

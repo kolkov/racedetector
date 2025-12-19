@@ -110,6 +110,39 @@ type InstrumentResult struct {
 //
 //nolint:revive // InstrumentFile is the standard API naming for this operation
 func InstrumentFile(filename string, src interface{}) (*InstrumentResult, error) {
+	return InstrumentFileWithOptions(filename, src, InstrumentOptions{})
+}
+
+// InstrumentFileWithOptions instruments a Go source file with race detection calls.
+//
+// v0.8.0: Added to support compiler-derived escape analysis for more accurate
+// stack-local variable detection, reducing false positives.
+//
+// Parameters:
+//   - filename: Path to the Go source file
+//   - src: Source code (nil to read from filename, or []byte/string/io.Reader)
+//   - opts: Instrumentation options (escape info, coalescing, etc.)
+//
+// Returns:
+//   - *InstrumentResult: Result containing code and statistics
+//   - error: Parsing or instrumentation error, or nil on success
+//
+// Example with escape analysis:
+//
+//	// First, get escape analysis from compiler
+//	escapeInfo, err := GetEscapeInfo("./...")
+//	if err != nil {
+//	    log.Printf("Warning: escape analysis unavailable: %v", err)
+//	}
+//
+//	// Then instrument with escape info
+//	result, err := InstrumentFileWithOptions("main.go", nil, InstrumentOptions{
+//	    EscapeInfo: escapeInfo,
+//	    Filename:   "main.go",
+//	})
+//
+//nolint:revive // InstrumentFileWithOptions follows standard naming
+func InstrumentFileWithOptions(filename string, src interface{}, opts InstrumentOptions) (*InstrumentResult, error) {
 	// Step 1: Parse source file into AST.
 	// We use parser.ParseComments to preserve comments in the output.
 	fset := token.NewFileSet()
@@ -140,7 +173,8 @@ func InstrumentFile(filename string, src interface{}) (*InstrumentResult, error)
 	// Step 3: Walk the AST and instrument memory accesses.
 	// This traverses the entire AST, finds memory access nodes, and
 	// inserts race detection calls before each access.
-	visitor, err := instrumentAST(fset, file)
+	// v0.8.0: Pass options for escape analysis integration.
+	visitor, err := instrumentASTWithOptions(fset, file, opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to instrument AST: %w", err)
 	}
@@ -208,10 +242,28 @@ func init() {
 // iteration issues.
 //
 // Thread Safety: NOT thread-safe (modifies AST in place).
+//
+//nolint:unused // Reserved for public API - used by external consumers
 func instrumentAST(fset *token.FileSet, file *ast.File) (*instrumentVisitor, error) {
-	// Pass 1: Create visitor instance and walk the AST.
+	return instrumentASTWithOptions(fset, file, InstrumentOptions{})
+}
+
+// instrumentASTWithOptions walks the AST and instruments memory accesses with options.
+//
+// v0.8.0: Added to support compiler-derived escape analysis.
+//
+// Parameters:
+//   - fset: File set for source position information
+//   - file: AST to instrument (modified in place)
+//   - opts: Instrumentation options (escape info, coalescing, etc.)
+//
+// Returns:
+//   - *instrumentVisitor: Visitor containing stats and instrumentation points
+//   - error: Instrumentation error, or nil on success
+func instrumentASTWithOptions(fset *token.FileSet, file *ast.File, opts InstrumentOptions) (*instrumentVisitor, error) {
+	// Pass 1: Create visitor instance with options and walk the AST.
 	// This identifies all memory access operations and records instrumentation points.
-	visitor := newInstrumentVisitor(fset, file)
+	visitor := newInstrumentVisitorWithOptions(fset, file, opts)
 	ast.Walk(visitor, file)
 
 	// Pass 2: Apply instrumentation - insert race detection calls into AST.

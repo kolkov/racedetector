@@ -8,10 +8,12 @@ Complete guide to using the `racedetector` tool for detecting data races in Go p
 - [Command Reference](#command-reference)
   - [build Command](#build-command)
   - [run Command](#run-command)
-  - [test Command](#test-command) (NEW in v0.4.0)
+  - [test Command](#test-command)
+  - [toolexec Command](#toolexec-command) (NEW in v0.8.0)
+- [Escape Analysis (NEW in v0.8.0)](#escape-analysis-new-in-v080)
 - [Integration with CI/CD](#integration-with-cicd)
 - [Best Practices](#best-practices)
-- [Sampling Mode (NEW in v0.3.0)](#sampling-mode-new-in-v030)
+- [Sampling Mode](#sampling-mode)
 - [Current Limitations](#current-limitations)
 - [FAQ](#faq)
 
@@ -330,6 +332,79 @@ ok      mypackage       0.269s
 - ✅ Anonymous function code instrumented
 
 **NEW in v0.4.0**
+
+---
+
+### `toolexec` Command
+
+Use racedetector as a toolexec wrapper for standard `go build`.
+
+**Syntax:**
+```bash
+go build -toolexec="racedetector toolexec" [go-build-flags] <packages>
+```
+
+**Description:**
+Intercepts Go compiler invocations to instrument source files during normal `go build`. Useful for:
+- Complex build systems
+- IDE integration
+- Makefile-based projects
+- When you need standard `go build` behavior with race detection
+
+**Examples:**
+
+```bash
+# Build with toolexec
+go build -toolexec="racedetector toolexec" -o myapp ./...
+
+# Build specific package
+go build -toolexec="racedetector toolexec" ./cmd/server
+
+# With additional flags
+go build -toolexec="racedetector toolexec" -ldflags="-s -w" ./...
+```
+
+**Requirements:**
+- Project must have racedetector as dependency: `go get github.com/kolkov/racedetector/race`
+
+**NEW in v0.8.0**
+
+---
+
+## Escape Analysis (NEW in v0.8.0)
+
+Starting with v0.8.0, racedetector uses compiler escape analysis to reduce false positives.
+
+### How It Works
+
+The detector runs `go build -gcflags="-m"` to determine which variables escape to heap:
+- **Stack-local variables** (don't escape) → Skip instrumentation
+- **Heap-allocated variables** (escape) → Instrument normally
+
+This reduces instrumentation by **30-50%** on real codebases.
+
+### Benefits
+
+| Before v0.8.0 | After v0.8.0 |
+|---------------|--------------|
+| Named return values instrumented | Skipped (stack-local) |
+| Function parameters instrumented | Skipped (stack-local) |
+| More false positives | 30-50% fewer false positives |
+
+### Example
+
+```go
+func GetNextToken() (tok Token, err error) {  // Named returns
+    tok.typ = TokenEnd  // Before: instrumented, After: skipped
+    return tok, nil
+}
+```
+
+Escape analysis detects that `tok` and `err` don't escape to heap, so they're not instrumented.
+
+### Tested On
+
+- **zygomys** (Issue #17): lexer.go reduced from 14 writes/35 reads to 9 writes/18 reads
 
 ---
 
