@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.5] - 2026-03-12
+
+### Fixed
+
+**`racedetector test` broken for projects with `internal/` packages**
+
+The `test` command copied `.go` files to a temporary directory and ran `go test` from there. This broke projects that import `internal/` packages from their own module, because Go enforces that `internal/` packages can only be imported from within the module tree — and a temp directory is not part of that tree. The same issue affected `//go:embed` directives (embedded assets not found in temp dir).
+
+**Root cause:** File-copying approach fundamentally incompatible with Go's `internal/` import restrictions and `//go:embed` path resolution.
+
+**Fix:** Replaced file-copying with Go's `-overlay` flag. Instrumented files are written to a temp directory, but the overlay JSON maps original file paths to their instrumented replacements. Go compiles from the original module tree (preserving `internal/` imports and `//go:embed`), reading only the overlaid files from the temp directory.
+
+**Changes:**
+- `instrumentTestSources()` now creates overlay JSON + `race.mod` instead of copying files
+- `runTests()` uses `-overlay`, `-modfile`, `-mod=mod` flags
+- Added `GOWORK=off` env var (makes `-modfile` compatible with Go workspace mode)
+- Added `GONOSUMCHECK` for racedetector module (skip checksum verification)
+- Removed unused `copyFile` function
+
+**Technical details:**
+- Overlay JSON format: `{"Replace": {"original/abs/path.go": "instrumented/abs/path.go"}}`
+- `race.mod` = user's `go.mod` + `require github.com/kolkov/racedetector`
+- `race.sum` = copy of user's `go.sum` (Go derives sum filename from modfile name)
+- Original `go.mod`/`go.sum` are never modified
+
+Found while testing on [gogpu/ui](https://github.com/gogpu/ui) — a multi-package project with `internal/` dependencies.
+
+---
+
 ## [0.8.4] - 2025-12-19
 
 ### Fixed

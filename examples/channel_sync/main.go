@@ -119,7 +119,6 @@ func demo2WorkerPool() {
 
 	// Receive results (main goroutine)
 	fmt.Println("Collector: Waiting for results...")
-	//nolint:prealloc // Size unknown at compile time, dynamic allocation acceptable
 	var allResults []int
 	for result := range results { // Safe: synchronized by channel
 		allResults = append(allResults, result)
@@ -188,7 +187,6 @@ func demo3FanOutFanIn() {
 
 	// Collect merged results
 	fmt.Println("Output: Collecting results...")
-	//nolint:prealloc // Size unknown at compile time, dynamic allocation acceptable
 	var results []int
 	for val := range merged { // Safe: channel synchronization
 		results = append(results, val)

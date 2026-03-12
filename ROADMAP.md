@@ -3,7 +3,7 @@
 > **Strategic Advantage**: Proven FastTrack algorithm implementation without CGO dependency!
 > **Approach**: Scientific algorithm + Go best practices - eliminates C++ ThreadSanitizer dependency
 
-**Last Updated**: 2025-12-19 | **Current Version**: v0.8.4 (STABLE) | **Strategy**: MVP → Optimization + Hardening → Advanced Optimizations → Assembly GID → Test Suite → Escape Analysis → Community Bug Fixes → Runtime Integration → Go Proposal | **Milestone**: v0.8.4 (Bug Fixes) → v0.9.0 (Polish) → v1.0.0 (Q1 2026)
+**Last Updated**: 2026-03-12 | **Current Version**: v0.8.5 (STABLE) | **Strategy**: MVP → Optimization + Hardening → Advanced Optimizations → Assembly GID → Test Suite → Escape Analysis → Community Bug Fixes → **Deep Runtime Integration** → Go Proposal | **Milestone**: v0.8.5 (Overlay Fix) → v0.9.0 (Polish) → v0.6.0 (Runtime Integration) → v1.0.0 (Q2 2026)
 
 ---
 
@@ -66,6 +66,8 @@ v0.8.3 (Issue #30: s.x++ fix) ✅ RELEASED 2025-12-19
          ↓ (Struct field access instrumentation, by @thepudds)
 v0.8.4 (Issues #33, #34) ✅ RELEASED 2025-12-19
          ↓ (Version prefix fix, type expression fix)
+v0.8.5 (Overlay Architecture) ✅ RELEASED 2026-03-12
+         ↓ (Fix internal/ imports and //go:embed for test command)
 v0.9.0 (Polish & Stabilization) → Final polish before v1.0
          ↓ (1-2 weeks)
 v1.0.0 LTS → Production-ready with Go community adoption (Q1 2026)
@@ -160,11 +162,11 @@ v1.0.0 LTS → Production-ready with Go community adoption (Q1 2026)
 
 ---
 
-## 📊 Current Status (v0.8.3 Stable)
+## 📊 Current Status (v0.8.5 Stable)
 
-**Phase**: ✅ Community Bug Fixes Complete!
-**Detector**: Production-grade with critical bug fixes from @thepudds! ⚡
-**AST Instrumentation**: Complete with escape analysis and struct field support! ✅
+**Phase**: ✅ Overlay Architecture for `test` command!
+**Detector**: Production-grade, tested on real-world multi-package projects! ⚡
+**AST Instrumentation**: Complete with escape analysis, overlay-based test workflow! ✅
 
 **What Works**:
 - ✅ `racedetector build` command (drop-in for `go build`)
@@ -313,7 +315,27 @@ func update(s *S) {
 
 ---
 
-### **v0.9.0 - Polish & Stabilization** (January 2026) [PLANNED]
+### **v0.8.5 - Overlay Architecture** (March 2026) [RELEASED! ✅]
+
+**Goal**: Fix `racedetector test` for projects with `internal/` packages and `//go:embed`
+
+**Duration**: 1 day (March 12, 2026)
+
+**Status**: ✅ RELEASED
+
+**Root Cause**: The `test` command copied `.go` files to a temp directory. Go enforces that `internal/` packages can only be imported from within the module tree — temp dir breaks this. Same issue for `//go:embed` (assets not found).
+
+**Fix**: Replaced file-copying with Go's `-overlay` flag:
+- Instrumented files written to temp dir with overlay JSON mapping
+- Go compiles from original module tree (preserves `internal/` and `//go:embed`)
+- `-modfile` + `-mod=mod` for dependency injection without modifying user's `go.mod`
+- `GOWORK=off` for compatibility with Go workspace mode
+
+**Validated on**: [gogpu/ui](https://github.com/gogpu/ui) — multi-package project with `internal/` dependencies.
+
+---
+
+### **v0.9.0 - Polish & Stabilization** (Q2 2026) [PLANNED]
 
 **Goal**: Final polish before v1.0.0 LTS release
 
@@ -326,6 +348,7 @@ func update(s *S) {
 2. **Edge case fixes**
    - Any remaining false positive patterns
    - Improved error messages
+   - Port overlay architecture to `build` command
 
 3. **Performance profiling**
    - Benchmark against ThreadSanitizer
@@ -335,7 +358,7 @@ func update(s *S) {
    - Address reported issues
    - Feature requests evaluation
 
-**Target**: January 2026
+**Target**: Q2 2026
 
 ---
 
@@ -405,31 +428,54 @@ func update(s *S) {
 
 ---
 
-### **v0.6.0 - Go Runtime Integration** (January 2026) [PLANNED]
+### **v0.6.0 - Go Runtime Integration** (Q2 2026) [PLANNED]
 
-**Goal**: Replace ThreadSanitizer in Go toolchain
+**Goal**: Deep compiler/runtime integration per @dvyukov's guidance
 
-**Duration**: 1-2 months (including testing)
+**Context**: Per [golang/go#6508](https://github.com/golang/go/issues/6508#issuecomment-3681427164):
+> "If you want this to be a replacement for the current race detector, then this need to be
+> integrated into the compiler/runtime -- use the same compiler instrumentation, implement
+> race annotations, etc, rather than being on the side."
 
-**Note**: Renumbered from v0.4.0 to v0.6.0 after adding v0.5.0 (Assembly GID)
+**Why Deep Integration is Required**:
+- AST-based instrumentation doesn't see stdlib sync primitives (#36)
+- `iter.Pull`, channels, etc. use `internal/race.Acquire/Release` we can't intercept
+- Results in false positives on properly synchronized code (#37)
+- Tracked in: #38 (Deep Integration Roadmap)
+
+**Duration**: 2-3 months (research + implementation + testing)
 
 **Planned Work**:
-1. **Runtime Integration**
-   - Replace `runtime/race/*.syso` with pure Go implementation
-   - Hook into `go build -race` flag
-   - Maintain API compatibility with existing instrumentation
 
-2. **Compiler Coordination**
-   - Work with existing `cmd/compile/internal/walk/race.go`
-   - Ensure instrumentation calls match new runtime
-   - Test with official Go test suite
+1. **Research Phase** (P0)
+   - [ ] Study `cmd/compile/internal/walk/race.go` instrumentation points
+   - [ ] Study `runtime/race.go` and `runtime/race/*.syso` API
+   - [ ] Understand stdlib race annotations (`internal/race`)
+   - [ ] Benchmark comparison: our detector vs TSAN
 
-3. **Validation**
-   - Run official Go race detector tests
-   - Benchmark against ThreadSanitizer
-   - Cross-platform testing (Linux, macOS, Windows)
+2. **Runtime Integration** (P1)
+   - [ ] Implement pure-Go runtime matching TSAN API
+   - [ ] Replace `runtime/race/*.syso` with our implementation
+   - [ ] Hook into `go build -race` flag
+   - [ ] Handle `race.Acquire/Release/Read/Write` from stdlib
 
-**Target**: January 31, 2026
+3. **Compiler Coordination** (P1)
+   - [ ] Work with existing compiler instrumentation
+   - [ ] Ensure all race annotations flow to our runtime
+   - [ ] Test with official Go test suite
+
+4. **Validation** (P2)
+   - [ ] Run official Go race detector tests (359+ scenarios)
+   - [ ] Benchmark against ThreadSanitizer
+   - [ ] Cross-platform testing (Linux, macOS, Windows)
+   - [ ] No false positives on iter.Pull patterns
+
+**Target**: Q2 2026
+
+**Related Issues**:
+- #36 - stdlib sync limitation (root cause)
+- #37 - iter.Pull heuristic (temporary workaround)
+- #38 - Deep integration roadmap (strategic)
 
 ---
 
@@ -518,5 +564,5 @@ func update(s *S) {
 
 ---
 
-*Version 1.6 (Updated 2025-12-19)*
-*Current: v0.8.3 (STABLE - Community Bug Fixes) | Next: v0.9.0 (Polish) | Target: v1.0.0 LTS (Q1 2026)*
+*Version 1.7 (Updated 2026-03-12)*
+*Current: v0.8.5 (STABLE - Overlay Architecture) | Next: v0.9.0 (Polish) | Target: v1.0.0 LTS (Q2 2026)*

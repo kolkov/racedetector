@@ -99,7 +99,6 @@ func parseGID(buf []byte) int64 {
 	// Format after prefix: "123 [running]:..."
 	var gid int64
 	for i := prefixLen; i < len(buf); i++ {
-		//nolint:gosec // G602: i is always < len(buf) due to loop condition
 		c := buf[i]
 		if c >= '0' && c <= '9' {
 			gid = gid*10 + int64(c-'0')

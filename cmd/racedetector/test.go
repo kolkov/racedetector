@@ -2,6 +2,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -86,11 +87,7 @@ func testCommand(args []string) {
 		os.Exit(1)
 	}
 
-	// Setup runtime linking
-	if err := workspace.setupRuntimeLinking(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error setting up runtime: %v\n", err)
-		os.Exit(1)
-	}
+	// Runtime linking is handled via -modfile flag (no setupRuntimeLinking needed)
 
 	// Run tests
 	exitCode := runTests(workspace, config)
@@ -209,7 +206,13 @@ func testFlagNeedsValue(flag string) bool {
 	return false
 }
 
-// instrumentTestSources instruments all source files including test files.
+// instrumentTestSources instruments source files and creates a Go overlay.
+//
+// Instead of copying files to a temp workspace (which breaks internal/ imports
+// and //go:embed), this creates a Go overlay JSON that maps original files to
+// their instrumented replacements. The Go toolchain reads all other files from
+// the original module tree, so internal packages, embedded assets, and all
+// imports resolve correctly.
 func instrumentTestSources(config *testConfig, workspace *workspace) error {
 	// Resolve package patterns to actual directories
 	dirs, err := resolvePackagePatterns(config.packages, config.workDir)
@@ -221,106 +224,101 @@ func instrumentTestSources(config *testConfig, workspace *workspace) error {
 		return fmt.Errorf("no packages found matching patterns: %v", config.packages)
 	}
 
-	// Store original source directory for go.mod replace directive handling
 	workspace.originalSourceDir = config.workDir
 
-	// Collect all .go files (including test files)
-	var allGoFiles []string
+	// Create directory for instrumented files
+	instrDir := filepath.Join(workspace.dir, "instr")
+	if err := os.MkdirAll(instrDir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	// Build overlay: original absolute path → instrumented absolute path
+	replace := make(map[string]string)
+
 	for _, dir := range dirs {
 		goFiles, err := collectTestGoFiles(dir)
 		if err != nil {
 			return fmt.Errorf("failed to collect files from %s: %w", dir, err)
 		}
-		allGoFiles = append(allGoFiles, goFiles...)
-	}
 
-	if len(allGoFiles) == 0 {
-		return fmt.Errorf("no Go source files found")
-	}
-
-	// Instrument each file
-	for _, srcPath := range allGoFiles {
-		// Instrument the file
-		result, err := instrument.InstrumentFile(srcPath, nil)
-		if err != nil {
-			return fmt.Errorf("failed to instrument %s: %w", srcPath, err)
-		}
-
-		// Determine output path in workspace
-		// Preserve relative path structure for package resolution
-		relPath, err := filepath.Rel(config.workDir, srcPath)
-		if err != nil {
-			// Fallback to just filename
-			relPath = filepath.Base(srcPath)
-		}
-
-		outPath := filepath.Join(workspace.srcDir, relPath)
-
-		// Create parent directories if needed
-		if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
-			return fmt.Errorf("failed to create directory for %s: %w", outPath, err)
-		}
-
-		// Handle CGO files: copy unchanged instead of instrumenting
-		if result.Stats.CGOSkipped {
-			// Read original file and copy to workspace unchanged
-			originalCode, readErr := os.ReadFile(srcPath)
-			if readErr != nil {
-				return fmt.Errorf("failed to read CGO file %s: %w", srcPath, readErr)
+		for _, srcPath := range goFiles {
+			result, err := instrument.InstrumentFile(srcPath, nil)
+			if err != nil {
+				return fmt.Errorf("failed to instrument %s: %w", srcPath, err)
 			}
-			if err := os.WriteFile(outPath, originalCode, 0644); err != nil {
-				return fmt.Errorf("failed to copy CGO file %s: %w", outPath, err)
+
+			relPath, relErr := filepath.Rel(config.workDir, srcPath)
+			if relErr != nil {
+				relPath = filepath.Base(srcPath)
 			}
-			fmt.Printf("Skipped (CGO): %s\n", relPath)
-			continue
-		}
 
-		// Write instrumented code to workspace
-		if err := os.WriteFile(outPath, []byte(result.Code), 0644); err != nil {
-			return fmt.Errorf("failed to write instrumented file %s: %w", outPath, err)
-		}
+			// CGO files: skip instrumentation, no overlay entry needed
+			if result.Stats.CGOSkipped {
+				fmt.Printf("Skipped (CGO): %s\n", relPath)
+				continue
+			}
 
-		// Print instrumentation info
-		fmt.Printf("Instrumented: %s\n", relPath)
-		if config.verbose {
-			stats := result.Stats
-			if stats.Total() > 0 {
-				fmt.Printf("  - %d writes, %d reads instrumented\n",
-					stats.WritesInstrumented, stats.ReadsInstrumented)
+			// Write instrumented file to temp dir, preserving relative path
+			outPath := filepath.Join(instrDir, relPath)
+			if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
+				return fmt.Errorf("failed to create directory for %s: %w", outPath, err)
+			}
+			if err := os.WriteFile(outPath, []byte(result.Code), 0644); err != nil {
+				return fmt.Errorf("failed to write %s: %w", outPath, err)
+			}
+
+			// Overlay requires absolute paths
+			absSrc, _ := filepath.Abs(srcPath)
+			absOut, _ := filepath.Abs(outPath)
+			replace[absSrc] = absOut
+
+			fmt.Printf("Instrumented: %s\n", relPath)
+			if config.verbose {
+				stats := result.Stats
+				if stats.Total() > 0 {
+					fmt.Printf("  - %d writes, %d reads instrumented\n",
+						stats.WritesInstrumented, stats.ReadsInstrumented)
+				}
 			}
 		}
 	}
 
-	// Copy go.mod to srcDir and add racedetector dependency
-	// The replace directive points to ./src, which must be a valid module
-	// AND instrumented code imports github.com/kolkov/racedetector/race
+	// Create modified go.mod with racedetector dependency (for -modfile flag).
+	// We use -modfile instead of overlaying go.mod because the overlaid go.mod
+	// would require "go mod tidy" (writes to original files through overlay).
+	// With -modfile, Go reads/writes race.mod and race.sum in the temp dir,
+	// leaving the user's go.mod/go.sum untouched.
 	goModSrc := filepath.Join(config.workDir, "go.mod")
-	if _, err := os.Stat(goModSrc); err == nil {
-		goModDst := filepath.Join(workspace.srcDir, "go.mod")
-		data, err := os.ReadFile(goModSrc)
-		if err == nil {
-			// Append racedetector require to the go.mod
-			modContent := string(data)
-			modContent += fmt.Sprintf("\nrequire github.com/kolkov/racedetector %s\n", runtime.GetVersion())
-			_ = os.WriteFile(goModDst, []byte(modContent), 0644)
+	if data, err := os.ReadFile(goModSrc); err == nil {
+		version := runtime.GetVersion()
+		modContent := string(data) + fmt.Sprintf("\nrequire github.com/kolkov/racedetector %s\n", version)
+
+		raceModPath := filepath.Join(workspace.dir, "race.mod")
+		if err := os.WriteFile(raceModPath, []byte(modContent), 0644); err != nil {
+			return fmt.Errorf("failed to write race.mod: %w", err)
+		}
+		workspace.modfilePath = raceModPath
+
+		// Copy go.sum → race.sum (Go derives sum path from modfile name)
+		goSumSrc := filepath.Join(config.workDir, "go.sum")
+		raceSumPath := filepath.Join(workspace.dir, "race.sum")
+		if sumData, sumErr := os.ReadFile(goSumSrc); sumErr == nil {
+			_ = os.WriteFile(raceSumPath, sumData, 0644)
 		}
 	}
 
-	// Also copy go.sum if exists
-	goSumSrc := filepath.Join(config.workDir, "go.sum")
-	if _, err := os.Stat(goSumSrc); err == nil {
-		goSumDst := filepath.Join(workspace.srcDir, "go.sum")
-		data, err := os.ReadFile(goSumSrc)
-		if err == nil {
-			_ = os.WriteFile(goSumDst, data, 0644)
-		}
+	// Write overlay JSON (must be after all entries are added to replace map)
+	type overlayJSON struct {
+		Replace map[string]string `json:"Replace"`
 	}
-
-	// Run go mod tidy in srcDir to update go.sum with racedetector dependency
-	tidyCmd := exec.Command("go", "mod", "tidy")
-	tidyCmd.Dir = workspace.srcDir
-	// Ignore errors - tidy may complain about missing imports that we'll resolve later
-	_ = tidyCmd.Run()
+	overlayData, err := json.Marshal(overlayJSON{Replace: replace})
+	if err != nil {
+		return fmt.Errorf("failed to marshal overlay: %w", err)
+	}
+	workspace.overlayPath = filepath.Join(workspace.dir, "overlay.json")
+	if err := os.WriteFile(workspace.overlayPath, overlayData, 0644); err != nil {
+		return fmt.Errorf("failed to write overlay: %w", err)
+	}
 
 	return nil
 }
@@ -426,10 +424,27 @@ func collectTestGoFiles(dir string) ([]string, error) {
 	return goFiles, nil
 }
 
-// runTests executes 'go test' in the workspace with instrumented code.
+// runTests executes 'go test' with the overlay from the original module directory.
+//
+// Instead of running from a temp workspace, this runs from the original project
+// directory with -overlay and -modfile flags. This ensures all imports (including
+// internal/ packages) and //go:embed directives resolve correctly.
 func runTests(workspace *workspace, config *testConfig) int {
-	// Prepare go test command
 	args := []string{"test"}
+
+	// Use overlay for instrumented files
+	if workspace.overlayPath != "" {
+		args = append(args, "-overlay="+workspace.overlayPath)
+	}
+
+	// Use modified go.mod with racedetector dependency.
+	// -mod=mod allows Go to update race.sum for new dependencies.
+	// GOWORK=off disables workspace mode (incompatible with -modfile).
+	// All writes go to race.mod/race.sum in the temp dir, not user files.
+	if workspace.modfilePath != "" {
+		args = append(args, "-modfile="+workspace.modfilePath)
+		args = append(args, "-mod=mod")
+	}
 
 	// Add test flags
 	args = append(args, config.testFlags...)
@@ -438,76 +453,39 @@ func runTests(workspace *workspace, config *testConfig) int {
 	runtimeFlags := runtime.BuildFlags()
 	args = append(args, runtimeFlags...)
 
-	// Handle -o flag: compile to temp location, then copy to user's desired path
-	var tempOutputPath string
+	// Handle -o flag (works directly since we run from original workDir)
 	if config.outputFile != "" {
-		// When using -c -o, we compile to workspace then copy to user path
-		tempOutputPath = filepath.Join(workspace.srcDir, "test.exe")
-		args = append(args, "-o", tempOutputPath)
-	}
-
-	// Test the current package (instrumented sources are in workspace)
-	args = append(args, "./...")
-
-	// Run go test
-	cmd := exec.Command("go", args...)
-	cmd.Dir = workspace.srcDir
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		// Check if it's an exit error
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return exitErr.ExitCode()
-		}
-		// Other error (failed to start, etc.)
-		fmt.Fprintf(os.Stderr, "Error executing tests: %v\n", err)
-		return 1
-	}
-
-	// If -o was specified, copy the compiled binary to user's desired location
-	if config.outputFile != "" && tempOutputPath != "" {
-		// Make output path absolute if relative
 		outputPath := config.outputFile
 		if !filepath.IsAbs(outputPath) {
 			outputPath = filepath.Join(config.workDir, outputPath)
 		}
+		args = append(args, "-o", outputPath)
+	}
 
-		// Copy the binary
-		if err := copyFile(tempOutputPath, outputPath); err != nil {
-			fmt.Fprintf(os.Stderr, "Error copying test binary: %v\n", err)
-			return 1
+	// Use original package patterns (resolved from the real module tree)
+	args = append(args, config.packages...)
+
+	// Run go test from the ORIGINAL project directory
+	cmd := exec.Command("go", args...)
+	cmd.Dir = config.workDir
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	// GOWORK=off: disable workspace mode which is incompatible with -modfile.
+	// GONOSUMCHECK: skip checksum verification for racedetector module.
+	cmd.Env = append(os.Environ(),
+		"GOWORK=off",
+		"GONOSUMCHECK=github.com/kolkov/racedetector",
+	)
+
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return exitErr.ExitCode()
 		}
-		fmt.Printf("Test binary written to: %s\n", config.outputFile)
+		fmt.Fprintf(os.Stderr, "Error executing tests: %v\n", err)
+		return 1
 	}
 
 	return 0
-}
-
-// copyFile copies a file from src to dst.
-func copyFile(src, dst string) error {
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return fmt.Errorf("failed to read %s: %w", src, err)
-	}
-
-	// Get source file permissions
-	srcInfo, err := os.Stat(src)
-	if err != nil {
-		return fmt.Errorf("failed to stat %s: %w", src, err)
-	}
-
-	// Create destination directory if needed
-	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-		return fmt.Errorf("failed to create directory for %s: %w", dst, err)
-	}
-
-	// Write with same permissions as source (executable)
-	if err := os.WriteFile(dst, data, srcInfo.Mode()); err != nil {
-		return fmt.Errorf("failed to write %s: %w", dst, err)
-	}
-
-	return nil
 }
