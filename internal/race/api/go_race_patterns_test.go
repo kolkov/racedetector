@@ -1365,7 +1365,7 @@ func TestGoNoRace_StackPushPop(t *testing.T) {
 
 	type stack []int
 
-	var s stack
+	s := make(stack, 0, 1)
 	addr := uintptr(unsafe.Pointer(&s))
 	ch := make(chan bool, 1)
 	var mu sync.Mutex

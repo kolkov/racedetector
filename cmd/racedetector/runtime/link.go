@@ -235,10 +235,10 @@ func ModFileOverlay(tempDir, sourceDir string) (string, error) {
 	if err == nil {
 		// Development mode - use local replace directive
 		content.WriteString("require github.com/kolkov/racedetector v0.0.0\n\n")
-		content.WriteString(fmt.Sprintf("replace github.com/kolkov/racedetector => %s\n", projectRoot))
+		fmt.Fprintf(&content, "replace github.com/kolkov/racedetector => %s\n", projectRoot)
 	} else {
 		// Published mode (CI, installed via go install) - require published package
-		content.WriteString(fmt.Sprintf("require github.com/kolkov/racedetector %s\n", GetVersion()))
+		fmt.Fprintf(&content, "require github.com/kolkov/racedetector %s\n", GetVersion())
 	}
 
 	// Find and parse original project's go.mod to:
@@ -252,7 +252,7 @@ func ModFileOverlay(tempDir, sourceDir string) (string, error) {
 			// Don't add replace for our own module (racedetector) - it's already handled above
 			if originalModuleName != "" && originalModuleName != "github.com/kolkov/racedetector" {
 				content.WriteString("\n// Replace original module with instrumented sources:\n")
-				content.WriteString(fmt.Sprintf("replace %s => ./src\n", originalModuleName))
+				fmt.Fprintf(&content, "replace %s => ./src\n", originalModuleName)
 			}
 
 			// Copy existing replace directives from original go.mod
@@ -343,20 +343,20 @@ func extractReplaceDirectives(goModPath string) string {
 		if rep.Old.Version != "" {
 			// Replace specific version: replace foo v1.0.0 => bar
 			if rep.New.Version != "" {
-				result.WriteString(fmt.Sprintf("replace %s %s => %s %s\n",
-					rep.Old.Path, rep.Old.Version, newPath, rep.New.Version))
+				fmt.Fprintf(&result, "replace %s %s => %s %s\n",
+					rep.Old.Path, rep.Old.Version, newPath, rep.New.Version)
 			} else {
-				result.WriteString(fmt.Sprintf("replace %s %s => %s\n",
-					rep.Old.Path, rep.Old.Version, newPath))
+				fmt.Fprintf(&result, "replace %s %s => %s\n",
+					rep.Old.Path, rep.Old.Version, newPath)
 			}
 		} else {
 			// Replace all versions: replace foo => bar
 			if rep.New.Version != "" {
-				result.WriteString(fmt.Sprintf("replace %s => %s %s\n",
-					rep.Old.Path, newPath, rep.New.Version))
+				fmt.Fprintf(&result, "replace %s => %s %s\n",
+					rep.Old.Path, newPath, rep.New.Version)
 			} else {
-				result.WriteString(fmt.Sprintf("replace %s => %s\n",
-					rep.Old.Path, newPath))
+				fmt.Fprintf(&result, "replace %s => %s\n",
+					rep.Old.Path, newPath)
 			}
 		}
 	}

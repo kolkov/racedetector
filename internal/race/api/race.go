@@ -925,8 +925,7 @@ func initTIDPool() {
 	// We want ascending allocation, so we reverse the order.
 	freeTIDs = make([]uint16, 65536)
 	for i := 0; i < 65536; i++ {
-		//nolint:gosec // G115: Safe conversion, i is always < 256
-		freeTIDs[i] = uint16(i) // Stack order: [0, 1, 2, ..., 255]
+		freeTIDs[i] = uint16(i)
 	}
 }
 
@@ -1196,11 +1195,11 @@ func getcallerpc() uintptr {
 	//   - getcallerpc (this function) - skip 0
 	//   - raceread/racewrite - skip 1
 	//   - returns: instrumented code - skip 2
-	_, _, pc, ok := runtime.Caller(2)
+	pc, _, _, ok := runtime.Caller(2)
 	if !ok {
 		return 0
 	}
-	return uintptr(pc)
+	return pc
 }
 
 // Enable turns on race detection.

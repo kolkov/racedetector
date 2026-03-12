@@ -125,7 +125,6 @@ func NewEpoch(tid uint16, clock uint64) Epoch {
 //
 //go:nosplit
 func (e Epoch) Decode() (tid uint16, clock uint64) {
-	//nolint:gosec // G115: Intentional truncation to extract top 16 bits as TID.
 	tid = uint16(e >> ClockBits)
 	clock = uint64(e) & ClockMask
 	return

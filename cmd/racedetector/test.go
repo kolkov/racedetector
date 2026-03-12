@@ -320,8 +320,6 @@ func instrumentTestSources(config *testConfig, workspace *workspace) error {
 		return fmt.Errorf("failed to write overlay: %w", err)
 	}
 
-
-
 	return nil
 }
 
@@ -491,4 +489,3 @@ func runTests(workspace *workspace, config *testConfig) int {
 
 	return 0
 }
-
