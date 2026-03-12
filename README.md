@@ -63,6 +63,7 @@ go build -toolexec="racedetector toolexec" ./...
 
 All standard `go build`, `go run`, and `go test` flags are supported.
 
+**v0.8.5+:** Full support for projects with `internal/` packages and `//go:embed` via Go overlay architecture.
 **v0.8.0+:** Escape analysis integration reduces false positives by 30-50%.
 
 ---
@@ -154,6 +155,7 @@ Ported **359 test scenarios** from Go's official race detector test suite:
 - Performance overhead higher than ThreadSanitizer for some workloads
 - Struct field access via dot notation has limited coverage
 - Assembly optimization only on amd64/arm64 (fallback available)
+- `build` command does not yet use overlay architecture (copies files to temp dir)
 
 ### Atomic Operations
 

@@ -215,6 +215,14 @@ type workspace struct {
 	// Original source directory (where original .go files come from)
 	// Used to find original go.mod for replace directives
 	originalSourceDir string
+
+	// overlayPath is the path to the overlay JSON file (used by test command).
+	// When set, go test uses -overlay flag instead of compiling from srcDir.
+	overlayPath string
+
+	// modfilePath is the path to a modified go.mod with racedetector dependency.
+	// Used with -modfile flag so the original go.mod is not modified.
+	modfilePath string
 }
 
 // createWorkspace creates a temporary workspace for building instrumented code.
